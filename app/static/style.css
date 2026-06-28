@@ -427,6 +427,16 @@ main {
   color: var(--text-muted);
 }
 
+.target-url {
+  color: #93c5fd;
+  text-decoration: none;
+}
+
+.target-url:hover {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+
 .manager-row-actions {
   display: flex;
   gap: 0.4rem;
@@ -1134,4 +1144,3 @@ tr:last-child td {
     transform: translateY(0);
   }
 }
-

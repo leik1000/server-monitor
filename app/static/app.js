@@ -216,6 +216,16 @@ function escapeHtml(value) {
   }[ch]));
 }
 
+function renderTargetUrl(url) {
+  if (!url) return "";
+  const safeUrl = escapeHtml(url);
+  return `<a class="target-url" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>`;
+}
+
+function renderTargetMeta(parts = []) {
+  return parts.filter(Boolean).map(escapeHtml).join(" · ");
+}
+
 function renderGroupTabs(targets = []) {
   const groups = new Set();
   for (const target of targets) {
@@ -286,7 +296,11 @@ function renderTargets(targets = []) {
     const failRate = total > 0 ? failed / total : 0;
     
     name.textContent = target.name || "-";
-    meta.textContent = [target.group, target.ip, target.base_url, target.note].filter(Boolean).join(" · ");
+    meta.innerHTML = [
+      renderTargetMeta([target.group, target.ip]),
+      renderTargetUrl(target.base_url),
+      renderTargetMeta([target.note]),
+    ].filter(Boolean).join(" · ");
     status.textContent = target.online ? "在线" : "离线";
     statusWrapper.classList.add(target.online ? "online" : "offline");
     
@@ -341,7 +355,11 @@ function renderTargetManager(targets = []) {
     row.innerHTML = `
       <div>
         <strong>${escapeHtml(target.name || "-")}</strong>
-        <span>${escapeHtml([target.group, target.ip, target.base_url, target.username ? `用户 ${target.username}` : "未配置用户名"].filter(Boolean).join(" · "))}</span>
+        <span>${[
+          renderTargetMeta([target.group, target.ip]),
+          renderTargetUrl(target.base_url),
+          renderTargetMeta([target.username ? `用户 ${target.username}` : "未配置用户名"]),
+        ].filter(Boolean).join(" · ")}</span>
       </div>
       <div class="manager-row-actions">
         <button class="secondary small btn-row-edit" type="button" data-action="edit" data-id="${escapeHtml(target.id || "")}">编辑</button>

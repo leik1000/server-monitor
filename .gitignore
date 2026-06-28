@@ -1,1 +1,3 @@
 /.venv
+/.env
+/config/targets.json

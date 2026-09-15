@@ -5,6 +5,7 @@ import json
 import os
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,10 @@ from fastapi.templating import Jinja2Templates
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("MONITOR_TARGETS_FILE", BASE_DIR / "config" / "targets.json"))
+COOKIE_POOL_PATH = Path(os.getenv("MONITOR_COOKIE_POOL_FILE", BASE_DIR / "config" / "cookies.json"))
 REQUEST_TIMEOUT = float(os.getenv("MONITOR_REQUEST_TIMEOUT", "12"))
 REFRESH_SECONDS = int(os.getenv("MONITOR_REFRESH_SECONDS", "15"))
+REFILL_INTERVAL_SECONDS = int(os.getenv("MONITOR_REFILL_INTERVAL_SECONDS", "300"))
 VERIFY_SSL = str(os.getenv("MONITOR_VERIFY_SSL", "true")).strip().lower() not in {"0", "false", "no", "off"}
 
 ADMIN_USERNAME = os.getenv("MONITOR_ADMIN_USERNAME", "")
@@ -83,6 +86,12 @@ class Target:
     note: str = ""
     username: str = ""
     password: str = ""
+    refill_enabled: bool = False
+    refill_mode: str = "target"
+    refill_threshold: int = 0
+    refill_target: int = 0
+    refill_count: int = 0
+    refill_batch_size: int = 10
 
 
 class TargetClient:
@@ -134,6 +143,18 @@ class TargetClient:
             response = await self.client.get(path)
         if response.status_code < 200 or response.status_code >= 300:
             raise RuntimeError(f"GET {path} failed: HTTP {response.status_code}")
+        data = response.json()
+        return data if isinstance(data, dict) else {"value": data}
+
+    async def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        await self.ensure_login()
+        response = await self.client.post(path, json=payload)
+        if response.status_code == 401:
+            await self.login()
+            response = await self.client.post(path, json=payload)
+        if response.status_code < 200 or response.status_code >= 300:
+            detail = response.text[:300]
+            raise RuntimeError(f"POST {path} failed: HTTP {response.status_code} {detail}")
         data = response.json()
         return data if isinstance(data, dict) else {"value": data}
 
@@ -281,6 +302,12 @@ def target_to_dict(target: Target) -> dict[str, Any]:
         "note": target.note,
         "username": target.username,
         "password": target.password,
+        "refill_enabled": target.refill_enabled,
+        "refill_mode": target.refill_mode,
+        "refill_threshold": target.refill_threshold,
+        "refill_target": target.refill_target,
+        "refill_count": target.refill_count,
+        "refill_batch_size": target.refill_batch_size,
     }
 
 
@@ -322,6 +349,12 @@ def target_from_payload(
         note=str(payload.get("note") or "").strip(),
         username=username,
         password=password,
+        refill_enabled=parse_bool(payload.get("refill_enabled"), existing.refill_enabled if existing else False),
+        refill_mode=str(payload.get("refill_mode") or (existing.refill_mode if existing else "target")).strip().lower(),
+        refill_threshold=max(0, int(payload.get("refill_threshold") or (existing.refill_threshold if existing else 0))),
+        refill_target=max(0, int(payload.get("refill_target") or (existing.refill_target if existing else 0))),
+        refill_count=max(0, int(payload.get("refill_count") or (existing.refill_count if existing else 0))),
+        refill_batch_size=max(1, min(100, int(payload.get("refill_batch_size") or (existing.refill_batch_size if existing else 10)))),
     )
 
 
@@ -359,6 +392,12 @@ def load_targets() -> list[Target]:
                 note=target.note,
                 username=target.username,
                 password=target.password,
+                refill_enabled=target.refill_enabled,
+                refill_mode=target.refill_mode,
+                refill_threshold=target.refill_threshold,
+                refill_target=target.refill_target,
+                refill_count=target.refill_count,
+                refill_batch_size=target.refill_batch_size,
             )
         seen_ids.add(target.id)
         targets.append(target)
@@ -376,12 +415,113 @@ def save_targets(targets: list[Target]) -> None:
     temp_path.replace(CONFIG_PATH)
 
 
+def cookie_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        if isinstance(value.get("cookie"), (str, dict, list)):
+            return cookie_text(value["cookie"])
+        if isinstance(value.get("cookies"), list):
+            return cookie_text(value["cookies"])
+        usage = value.get("_usage")
+        if isinstance(usage, dict) and usage.get("cookie_header"):
+            return str(usage["cookie_header"]).strip()
+        pairs = [f"{key}={val}" for key, val in value.items() if key and val is not None]
+        return "; ".join(pairs)
+    if isinstance(value, list):
+        pairs = []
+        for item in value:
+            if isinstance(item, dict) and item.get("name") is not None and item.get("value") is not None:
+                pairs.append(f"{item['name']}={item['value']}")
+            elif isinstance(item, str) and item.strip():
+                pairs.append(item.strip())
+        return "; ".join(pairs)
+    return str(value or "").strip()
+
+
+class CookiePool:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+
+    def _load(self) -> list[dict[str, Any]]:
+        if not COOKIE_POOL_PATH.exists():
+            return []
+        try:
+            raw = json.loads(COOKIE_POOL_PATH.read_text(encoding="utf-8"))
+            return raw.get("cookies", []) if isinstance(raw, dict) else raw
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _save(self, items: list[dict[str, Any]]) -> None:
+        COOKIE_POOL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = COOKIE_POOL_PATH.with_name(f"{COOKIE_POOL_PATH.name}.tmp")
+        temp_path.write_text(json.dumps({"cookies": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temp_path.replace(COOKIE_POOL_PATH)
+
+    async def import_items(self, items: list[Any]) -> dict[str, Any]:
+        async with self._lock:
+            rows = self._load()
+            known = {str(row.get("hash") or "") for row in rows}
+            imported, duplicates, invalid = [], 0, 0
+            for index, item in enumerate(items, start=1):
+                value = cookie_text(item.get("cookie") if isinstance(item, dict) else item)
+                if not value:
+                    invalid += 1
+                    continue
+                digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+                if digest in known:
+                    duplicates += 1
+                    continue
+                name = str(item.get("name") or f"cookie-{len(rows) + 1}").strip() if isinstance(item, dict) else f"cookie-{len(rows) + 1}"
+                row = {"id": uuid.uuid4().hex[:12], "name": name, "cookie": value, "hash": digest, "status": "available", "target_id": "", "imported_at": int(time.time()), "last_error": ""}
+                rows.append(row)
+                known.add(digest)
+                imported.append({"id": row["id"], "name": name, "hash": digest[:12]})
+            self._save(rows)
+            return {"status": "ok", "imported_count": len(imported), "duplicate_count": duplicates, "invalid_count": invalid, "available_count": sum(row.get("status") == "available" for row in rows), "items": imported}
+
+    async def reserve(self, target_id: str, count: int) -> list[dict[str, Any]]:
+        async with self._lock:
+            rows = self._load()
+            selected = [row for row in rows if row.get("status") == "available"][:max(0, count)]
+            ids = {row.get("id") for row in selected}
+            for row in rows:
+                if row.get("id") in ids:
+                    row.update({"status": "assigning", "target_id": target_id})
+            self._save(rows)
+            return [dict(row) for row in selected]
+
+    async def finish(self, rows: list[dict[str, Any]], result: dict[str, Any]) -> None:
+        async with self._lock:
+            current = self._load()
+            failed_indexes = {int(item.get("index")) for item in result.get("failed", []) if isinstance(item, dict) and str(item.get("index", "")).isdigit()}
+            for index, original in enumerate(rows):
+                for row in current:
+                    if row.get("id") != original.get("id"):
+                        continue
+                    if index in failed_indexes:
+                        row.update({"status": "import_failed", "last_error": "目标服务器导入失败"})
+                    else:
+                        row.update({"status": "assigned", "last_error": ""})
+            self._save(current)
+
+    async def summary(self) -> dict[str, Any]:
+        async with self._lock:
+            rows = self._load()
+            return {"total": len(rows), "available": sum(row.get("status") == "available" for row in rows), "assigned": sum(row.get("status") == "assigned" for row in rows), "assigning": sum(row.get("status") == "assigning" for row in rows), "failed": sum(row.get("status") == "import_failed" for row in rows)}
+
+
+cookie_pool = CookiePool()
+
+
 class MonitorState:
     def __init__(self) -> None:
         self.clients: dict[str, TargetClient] = {}
         self.snapshot: dict[str, Any] = {"targets": [], "updated_at": 0, "refresh_seconds": REFRESH_SECONDS}
         self._task: asyncio.Task | None = None
         self._refresh_lock = asyncio.Lock()
+        self._refill_locks: set[str] = set()
+        self._last_refill_at: dict[str, float] = {}
 
     async def start(self) -> None:
         self.reload_targets()
@@ -452,7 +592,50 @@ class MonitorState:
                 "updated_at": int(time.time()),
                 "refresh_seconds": REFRESH_SECONDS,
             }
+            await self.auto_refill(targets)
             return self.snapshot
+
+    async def refill(self, target_id: str, count: int | None = None) -> dict[str, Any]:
+        if target_id in self._refill_locks:
+            return {"status": "running", "message": "该服务器已有补号任务"}
+        target = next((item for item in load_targets() if item.id == target_id), None)
+        if target is None:
+            raise ValueError("target not found")
+        self._refill_locks.add(target_id)
+        try:
+            client = self.clients.get(target_id)
+            if client is None:
+                raise ValueError("target client not found")
+            token_payload = await client.get_json("/api/v1/tokens?page=1&page_size=1")
+            active = normalize_token_summary(token_payload)["active"]
+            if count is None:
+                if target.refill_mode == "count":
+                    count = target.refill_count
+                elif target.refill_threshold and active > target.refill_threshold:
+                    return {"status": "skipped", "active": active, "message": "当前账号数高于补号阈值"}
+                else:
+                    count = max(0, target.refill_target - active)
+            count = min(max(0, int(count)), target.refill_batch_size)
+            reserved = await cookie_pool.reserve(target_id, count)
+            if not reserved:
+                return {"status": "empty", "active": active, "message": "中央 Cookie 池没有可用 Cookie"}
+            result = await client.post_json("/api/v1/refresh-profiles/import-cookie-batch", {"items": [{"cookie": row["cookie"], "name": row.get("name")} for row in reserved]})
+            await cookie_pool.finish(reserved, result)
+            return {"status": result.get("status", "ok"), "active_before": active, "requested_count": count, "pool_result": result}
+        finally:
+            self._last_refill_at[target_id] = time.time()
+            self._refill_locks.discard(target_id)
+
+    async def auto_refill(self, targets: list[dict[str, Any]]) -> None:
+        configs = {target.id: target for target in load_targets() if target.refill_enabled}
+        for item in targets:
+            target = configs.get(item.get("id"))
+            if target and item.get("online"):
+                active = int((item.get("token_summary") or {}).get("active") or 0)
+                should_run = target.refill_mode == "count" or (target.refill_target > active and (not target.refill_threshold or active <= target.refill_threshold))
+                recent = time.time() - self._last_refill_at.get(target.id, 0)
+                if should_run and recent >= REFILL_INTERVAL_SECONDS and target.id not in self._refill_locks:
+                    asyncio.create_task(self.refill(target.id))
 
 
 def build_summary(targets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -603,6 +786,30 @@ async def refresh() -> dict[str, Any]:
         return await monitor_state.refresh()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cookies", dependencies=[Depends(verify_api_auth)])
+async def cookie_pool_summary() -> dict[str, Any]:
+    return await cookie_pool.summary()
+
+
+@app.post("/api/cookies/import", dependencies=[Depends(verify_api_auth)])
+async def import_cookies(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    items = payload.get("items") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="items must be a list")
+    return await cookie_pool.import_items(items)
+
+
+@app.post("/api/targets/{target_id}/refill", dependencies=[Depends(verify_api_auth)])
+async def refill_target(target_id: str, request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    count = payload.get("count") if isinstance(payload, dict) else None
+    try:
+        return await monitor_state.refill(target_id, count)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/system/config", dependencies=[Depends(verify_api_auth)])

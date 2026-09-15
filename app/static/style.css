@@ -338,6 +338,25 @@ main {
   box-shadow: 0 0 0 3px var(--border-focus);
 }
 
+.target-form select,
+.cookie-pool-panel textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+}
+
+.cookie-pool-panel {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px dashed var(--border);
+}
+
+.compact-head { margin-bottom: 0.75rem; }
+
 .checkbox-label {
   flex-direction: row !important;
   align-items: center;

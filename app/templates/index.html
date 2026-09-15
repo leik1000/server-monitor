@@ -133,6 +133,36 @@
           <span>备注</span>
           <input id="targetNote" name="note" placeholder="可选备注信息" />
         </label>
+        <label>
+          <span>自动补号</span>
+          <select id="targetRefillEnabled" name="refill_enabled">
+            <option value="false">关闭</option>
+            <option value="true">开启</option>
+          </select>
+        </label>
+        <label>
+          <span>补号模式</span>
+          <select id="targetRefillMode" name="refill_mode">
+            <option value="target">补到目标数量</option>
+            <option value="count">固定补充数量</option>
+          </select>
+        </label>
+        <label>
+          <span>触发阈值</span>
+          <input id="targetRefillThreshold" type="number" min="0" placeholder="0 表示不限制" />
+        </label>
+        <label>
+          <span>目标账号数</span>
+          <input id="targetRefillTarget" type="number" min="0" placeholder="例如 30" />
+        </label>
+        <label>
+          <span>固定补充数量</span>
+          <input id="targetRefillCount" type="number" min="0" placeholder="例如 5" />
+        </label>
+        <label>
+          <span>单批上限</span>
+          <input id="targetRefillBatchSize" type="number" min="1" max="100" placeholder="10" />
+        </label>
         
         <!-- 右下角的操作按钮区域 -->
         <div class="form-actions-right">
@@ -141,6 +171,12 @@
         </div>
       </form>
       <p id="formMessage" class="form-message"></p>
+      <div class="cookie-pool-panel">
+        <div class="section-head compact-head"><div><h3>中央 Cookie 池</h3><p id="cookiePoolSummary">读取中...</p></div></div>
+        <textarea id="cookieImportText" rows="4" placeholder='粘贴 Cookie 字符串、JSON 对象或 JSON 数组'></textarea>
+        <div class="form-actions-right"><button id="importCookiesBtn" type="button">批量导入 Cookie</button></div>
+        <p id="cookieFormMessage" class="form-message"></p>
+      </div>
     </section>
 
     <!-- 系统设置（可折叠） -->
@@ -283,6 +319,7 @@
 
         <div class="target-actions">
           <button class="secondary small btn-edit" type="button" data-action="edit">编辑服务器</button>
+          <button class="secondary small btn-refill" type="button" data-action="refill">立即补号</button>
           <button class="danger small btn-delete" type="button" data-action="delete">删除</button>
         </div>
       </div>

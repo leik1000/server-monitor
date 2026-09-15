@@ -17,6 +17,16 @@ const els = {
   targetPassword: document.getElementById("targetPassword"),
   targetGroup: document.getElementById("targetGroup"),
   targetNote: document.getElementById("targetNote"),
+  targetRefillEnabled: document.getElementById("targetRefillEnabled"),
+  targetRefillMode: document.getElementById("targetRefillMode"),
+  targetRefillThreshold: document.getElementById("targetRefillThreshold"),
+  targetRefillTarget: document.getElementById("targetRefillTarget"),
+  targetRefillCount: document.getElementById("targetRefillCount"),
+  targetRefillBatchSize: document.getElementById("targetRefillBatchSize"),
+  cookieImportText: document.getElementById("cookieImportText"),
+  importCookiesBtn: document.getElementById("importCookiesBtn"),
+  cookiePoolSummary: document.getElementById("cookiePoolSummary"),
+  cookieFormMessage: document.getElementById("cookieFormMessage"),
   saveTargetBtn: document.getElementById("saveTargetBtn"),
   cancelEditBtn: document.getElementById("cancelEditBtn"),
   formMessage: document.getElementById("formMessage"),
@@ -336,8 +346,10 @@ function renderTargets(targets = []) {
     // 编辑和删除按钮的 ID 绑定
     const editBtn = card.querySelector(".btn-edit");
     const deleteBtn = card.querySelector(".btn-delete");
+    const refillBtn = card.querySelector(".btn-refill");
     if (editBtn) editBtn.dataset.id = target.id || "";
     if (deleteBtn) deleteBtn.dataset.id = target.id || "";
+    if (refillBtn) refillBtn.dataset.id = target.id || "";
     
     els.targets.appendChild(node);
   }
@@ -380,6 +392,12 @@ function getFormPayload() {
     group: els.targetGroup.value.trim(),
     note: els.targetNote.value.trim(),
     enabled: true,
+    refill_enabled: els.targetRefillEnabled.value === "true",
+    refill_mode: els.targetRefillMode.value,
+    refill_threshold: Number(els.targetRefillThreshold.value || 0),
+    refill_target: Number(els.targetRefillTarget.value || 0),
+    refill_count: Number(els.targetRefillCount.value || 0),
+    refill_batch_size: Number(els.targetRefillBatchSize.value || 10),
   };
 }
 
@@ -391,6 +409,12 @@ function resetForm() {
   els.saveTargetBtn.textContent = "添加服务器";
   els.cancelEditBtn.hidden = true;
   els.formMessage.textContent = "";
+  els.targetRefillEnabled.value = "false";
+  els.targetRefillMode.value = "target";
+  els.targetRefillThreshold.value = "";
+  els.targetRefillTarget.value = "";
+  els.targetRefillCount.value = "";
+  els.targetRefillBatchSize.value = "10";
 }
 
 function startEdit(targetId) {
@@ -407,6 +431,12 @@ function startEdit(targetId) {
     : "未保存密码，请输入";
   els.targetGroup.value = target.group || "";
   els.targetNote.value = target.note || "";
+  els.targetRefillEnabled.value = String(Boolean(target.refill_enabled));
+  els.targetRefillMode.value = target.refill_mode || "target";
+  els.targetRefillThreshold.value = target.refill_threshold || "";
+  els.targetRefillTarget.value = target.refill_target || "";
+  els.targetRefillCount.value = target.refill_count || "";
+  els.targetRefillBatchSize.value = target.refill_batch_size || 10;
   els.saveTargetBtn.textContent = "保存修改";
   els.cancelEditBtn.hidden = false;
   els.formMessage.textContent = `正在编辑：${target.name || "-"}`;
@@ -454,6 +484,21 @@ async function deleteTarget(targetId) {
   }
 }
 
+async function refillTarget(targetId) {
+  try {
+    const res = await fetch(`/api/targets/${encodeURIComponent(targetId)}/refill`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const result = data.pool_result || {};
+    alert(data.message || `补号完成：成功 ${result.imported_count || 0} 个，失败 ${result.failed_count || 0} 个`);
+    await loadStatus(true);
+  } catch (err) {
+    alert(`补号失败：${err.message || err}`);
+  }
+}
+
 function handleTargetAction(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -461,6 +506,7 @@ function handleTargetAction(event) {
   const id = button.dataset.id;
   if (action === "edit") startEdit(id);
   if (action === "delete") deleteTarget(id);
+  if (action === "refill") refillTarget(id);
 }
 
 async function loadStatus(force = false) {
@@ -477,6 +523,7 @@ async function loadStatus(force = false) {
     renderSummary(data.summary || {});
     renderTargets(latestTargets);
     renderGroupTabs(latestTargets);
+    loadCookiePool();
     
     els.updatedAt.textContent = `更新于 ${fmtTime(data.updated_at)}`;
     if (refreshTimer) clearInterval(refreshTimer);
@@ -489,6 +536,41 @@ async function loadStatus(force = false) {
     if (els.refreshBtnIcon) {
       els.refreshBtnIcon.classList.remove("spinning");
     }
+  }
+}
+
+async function loadCookiePool() {
+  try {
+    const res = await fetch("/api/cookies");
+    const data = await res.json();
+    els.cookiePoolSummary.textContent = `总数 ${data.total || 0} · 可用 ${data.available || 0} · 已分配 ${data.assigned || 0} · 失败 ${data.failed || 0}`;
+  } catch (err) {
+    els.cookiePoolSummary.textContent = `读取失败：${err.message || err}`;
+  }
+}
+
+async function importCookies() {
+  const text = els.cookieImportText.value.trim();
+  if (!text) return;
+  let items;
+  try {
+    const parsed = JSON.parse(text);
+    items = Array.isArray(parsed) ? parsed : [parsed];
+  } catch (_) {
+    items = text.split(/\r?\n/).filter(Boolean).map((cookie) => ({ cookie }));
+  }
+  els.importCookiesBtn.disabled = true;
+  try {
+    const res = await fetch("/api/cookies/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    els.cookieFormMessage.textContent = `导入 ${data.imported_count} 个，重复 ${data.duplicate_count} 个，无效 ${data.invalid_count} 个`;
+    els.cookieImportText.value = "";
+    await loadCookiePool();
+  } catch (err) {
+    els.cookieFormMessage.textContent = `导入失败：${err.message || err}`;
+  } finally {
+    els.importCookiesBtn.disabled = false;
   }
 }
 
@@ -605,4 +687,5 @@ els.cancelEditBtn.addEventListener("click", resetForm);
 els.systemForm.addEventListener("submit", saveSystemConfig);
 els.targets.addEventListener("click", handleTargetAction);
 els.targetManagerList.addEventListener("click", handleTargetAction);
+els.importCookiesBtn.addEventListener("click", importCookies);
 loadStatus(false);

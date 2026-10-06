@@ -6,6 +6,9 @@ import os
 import time
 import uuid
 import hashlib
+import secrets
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,10 @@ VERIFY_SSL = str(os.getenv("MONITOR_VERIFY_SSL", "true")).strip().lower() not in
 
 ADMIN_USERNAME = os.getenv("MONITOR_ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("MONITOR_ADMIN_PASSWORD", "")
+SESSION_MAX_AGE = int(os.getenv("MONITOR_SESSION_DAYS", "30")) * 86400
+if SESSION_MAX_AGE <= 0:
+    raise ValueError("MONITOR_SESSION_DAYS must be positive")
+SESSION_DB_PATH = BASE_DIR / "config" / "sessions.sqlite3"
 
 SYSTEM_CONFIG_PATH = BASE_DIR / "config" / "system.json"
 
@@ -62,13 +69,47 @@ def save_system_credentials(username: str, password: str) -> None:
 
 SYSTEM_USERNAME, SYSTEM_PASSWORD = load_system_credentials()
 
-ACTIVE_SESSIONS: set[str] = set()
+@contextmanager
+def session_db():
+    SESSION_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(SESSION_DB_PATH)
+    try:
+        with connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS sessions "
+                "(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)"
+            )
+            yield connection
+    finally:
+        connection.close()
+
+
+def session_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_session() -> str:
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    with session_db() as connection:
+        connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+        connection.execute(
+            "INSERT INTO sessions (token_hash, expires_at) VALUES (?, ?)",
+            (session_hash(token), now + SESSION_MAX_AGE),
+        )
+    return token
 
 def is_authenticated(request: Request) -> bool:
     if not SYSTEM_USERNAME and not SYSTEM_PASSWORD:
         return True
     session_token = request.cookies.get("session_token")
-    return bool(session_token and session_token in ACTIVE_SESSIONS)
+    if not session_token:
+        return False
+    with session_db() as connection:
+        return connection.execute(
+            "SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?",
+            (session_hash(session_token), int(time.time())),
+        ).fetchone() is not None
 
 def verify_api_auth(request: Request) -> None:
     if not is_authenticated(request):
@@ -693,14 +734,13 @@ async def login_post(
     password: str = Form(...)
 ) -> Response:
     if username == SYSTEM_USERNAME and password == SYSTEM_PASSWORD:
-        token = uuid.uuid4().hex
-        ACTIVE_SESSIONS.add(token)
+        token = create_session()
         response = RedirectResponse(url="/", status_code=303)
         response.set_cookie(
             key="session_token",
             value=token,
             httponly=True,
-            max_age=86400,
+            max_age=SESSION_MAX_AGE,
             samesite="lax",
         )
         return response
@@ -711,7 +751,11 @@ async def login_post(
 
 
 @app.get("/logout")
-async def logout() -> Response:
+async def logout(request: Request) -> Response:
+    token = request.cookies.get("session_token")
+    if token:
+        with session_db() as connection:
+            connection.execute("DELETE FROM sessions WHERE token_hash = ?", (session_hash(token),))
     response = RedirectResponse(url="/login", status_code=307)
     response.delete_cookie("session_token")
     return response
@@ -833,6 +877,9 @@ async def update_system_config(request: Request) -> dict[str, str]:
             password = SYSTEM_PASSWORD
             
         save_system_credentials(username, password)
+        if (username, password) != (SYSTEM_USERNAME, SYSTEM_PASSWORD):
+            with session_db() as connection:
+                connection.execute("DELETE FROM sessions")
         SYSTEM_USERNAME = username
         SYSTEM_PASSWORD = password
         return {"status": "ok", "username": username}

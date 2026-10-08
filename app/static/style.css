@@ -536,18 +536,10 @@ main {
 }
 
 .target-stats.collapsed-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
   width: 100%;
-}
-
-.target-stats.collapsed-stats .stat-box:nth-child(1),
-.target-stats.collapsed-stats .stat-box:nth-child(2) {
-  flex: 0 0 85px;
-}
-
-.target-stats.collapsed-stats .stat-box:nth-child(3) {
-  flex: 1 1 auto;
 }
 
 .collapsed-stats .stat-box {

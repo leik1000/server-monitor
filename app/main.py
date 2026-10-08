@@ -272,8 +272,12 @@ def normalize_stats(stats: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_token_summary(tokens_payload: dict[str, Any]) -> dict[str, Any]:
     summary = tokens_payload.get("summary") if isinstance(tokens_payload.get("summary"), dict) else {}
+    # summary.total includes pending accounts; the top-level total is for token pagination.
+    total = summary.get("total")
+    if total is None:
+        total = tokens_payload.get("total")
     return {
-        "total": int(tokens_payload.get("total") or summary.get("total") or 0),
+        "total": int(total or 0),
         "active": int(summary.get("active") or summary.get("active_count") or 0),
         "pending": int(summary.get("pending") or 0),
         "credit_active": int(summary.get("credit_active") or summary.get("credit_active_count") or 0),

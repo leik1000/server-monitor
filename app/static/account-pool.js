@@ -25,6 +25,7 @@
     try {
       const [summary, result] = await Promise.all([api("/api/cookies"), api("/api/import-jobs")]);
       available = summary.available;
+      $("centralAccountCount").textContent = fmtNumber(summary.total);
       $("cookiePoolSummary").innerHTML = [
         ["可分配账号", summary.available, "pool-available"], ["排队 / 导入中", summary.assigning, ""],
         ["待确认", summary.unknown, ""], ["失败待处理", summary.failed, ""], ["累计已分配", summary.assigned, ""],
@@ -36,6 +37,7 @@
       if ($("dispatchDialog").open) updateTotal();
     } catch (error) {
       $("cookiePoolSummary").textContent = `库存读取失败：${error.message}`;
+      $("centralAccountCount").textContent = "-";
     } finally {
       loading = false;
       clearTimeout(timer);
@@ -67,6 +69,12 @@
   function setUploadBusy(busy) {
     uploading = busy;
     ["accountFiles", "accountFolder", "importCookiesBtn"].forEach((id) => { $(id).disabled = busy; });
+    $("importCookiesBtn").textContent = busy ? "正在导入..." : "导入到号池";
+    $("accountImportDialog").setAttribute("aria-busy", String(busy));
+    if (busy) {
+      $("accountUploadMessage").textContent = "正在读取账号并准备导入...";
+      $("uploadErrorDetails").hidden = true;
+    }
   }
 
   async function uploadDocuments(documents) {
@@ -74,7 +82,9 @@
   }
 
   function showUploadResult(totals, processed, total, errors, finished = false) {
-    $("cookieFormMessage").textContent = `${finished ? "上传完成" : "上传中"} ${processed}/${total} 文件 · 新增 ${totals.imported_count} · 重复 ${totals.duplicate_count} · 无效 ${totals.invalid_count}`;
+    const message = `${finished ? "上传完成" : "上传中"} ${processed}/${total} 文件 · 新增 ${totals.imported_count} · 重复 ${totals.duplicate_count} · 无效 ${totals.invalid_count}`;
+    $("accountUploadMessage").textContent = message;
+    $("cookieFormMessage").textContent = message;
     $("uploadErrorDetails").hidden = !errors.length;
     $("uploadErrors").textContent = errors.slice(0, 100).map((e) => `${e.source || "粘贴内容"} 第 ${e.index || 0} 条：${e.error}`).join("\n");
   }
@@ -82,7 +92,7 @@
   async function importFiles(event) {
     if (uploading) return;
     const files = Array.from(event.target.files || []).filter((f) => /\.(json|txt)$/i.test(f.name));
-    if (!files.length) { $("cookieFormMessage").textContent = "请选择 JSON 或 TXT 文件"; return; }
+    if (!files.length) { $("accountUploadMessage").textContent = "请选择 JSON 或 TXT 文件"; return; }
     setUploadBusy(true);
     const totals = { imported_count: 0, duplicate_count: 0, invalid_count: 0 };
     const errors = [];
@@ -115,6 +125,7 @@
       showUploadResult(totals, processed, files.length, errors, true);
     } catch (error) {
       $("cookieFormMessage").textContent = `上传中断，已处理 ${processed}/${files.length} 文件，新增 ${totals.imported_count}：${error.message}。可重新选择全部文件，已入池账号会自动跳过。`;
+      $("accountUploadMessage").textContent = $("cookieFormMessage").textContent;
     } finally {
       event.target.value = "";
       setUploadBusy(false);
@@ -124,7 +135,8 @@
 
   async function importText() {
     const text = $("cookieImportText").value.trim();
-    if (!text || uploading) return;
+    if (uploading) return;
+    if (!text) { $("accountUploadMessage").textContent = "请粘贴账号内容，或选择账号文件上传"; return; }
     setUploadBusy(true);
     try {
       const result = await uploadDocuments([{ name: "粘贴内容", text }]);
@@ -132,7 +144,8 @@
       if (!result.invalid_count) $("cookieImportText").value = "";
       await refresh();
     } catch (error) {
-      $("cookieFormMessage").textContent = `入池失败：${error.message}`;
+      $("accountUploadMessage").textContent = `入池失败：${error.message}`;
+      $("cookieFormMessage").textContent = $("accountUploadMessage").textContent;
     } finally { setUploadBusy(false); }
   }
 
@@ -218,6 +231,11 @@
   $("closeDispatchBtn").addEventListener("click", () => $("dispatchDialog").close());
   $("dispatchCount").addEventListener("input", updateTotal);
   $("accountFiles").addEventListener("change", importFiles);
+  $("openAccountImportBtn").addEventListener("click", () => {
+    $("accountImportDialog").showModal();
+    if (!uploading) $("cookieImportText").focus();
+  });
+  $("closeAccountImportBtn").addEventListener("click", () => $("accountImportDialog").close());
   $("accountFolder").addEventListener("change", importFiles);
   window.accountPoolUI = { refresh, importText, openRefill };
   refresh();

@@ -4,8 +4,7 @@ const els = {
   refreshBtnIcon: document.getElementById("refreshBtnIcon"),
   targets: document.getElementById("targets"),
   tpl: document.getElementById("targetTpl"),
-  targetCount: document.getElementById("targetCount"),
-  onlineCount: document.getElementById("onlineCount"),
+  serverAccountCount: document.getElementById("serverAccountCount"),
   runningCount: document.getElementById("runningCount"),
   totalRequests: document.getElementById("totalRequests"),
   failedRequests: document.getElementById("failedRequests"),
@@ -124,8 +123,10 @@ function buildBucketTitle(item, target = {}) {
 }
 
 function renderSummary(summary = {}) {
-  els.targetCount.textContent = fmtNumber(summary.target_count);
-  els.onlineCount.textContent = `${fmtNumber(summary.online_count)} / ${fmtNumber(summary.target_count)}`;
+  els.serverAccountCount.textContent = fmtNumber(summary.account_total);
+  els.serverAccountCount.title = summary.offline_count
+    ? `已获取的服务器账号总数（含待激活）；${summary.offline_count} 台服务器离线，当前未计入`
+    : "所有已启用服务器的账号总数（含待激活）";
   els.runningCount.textContent = fmtNumber(summary.in_progress_requests);
   els.totalRequests.textContent = fmtNumber(summary.total_requests);
   els.failedRequests.textContent = fmtNumber(summary.failed_requests);

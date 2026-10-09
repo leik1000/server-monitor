@@ -7,7 +7,20 @@
 .pool-available strong { color: var(--ok); }
 .pool-help { color: var(--text-muted); font-size: .8rem; margin: .7rem 0; }
 .pool-card summary { cursor: pointer; padding: .7rem 0; }
-.pool-card textarea { width: 100%; margin: .5rem 0; }
+.account-import-dialog { width: min(760px, 94vw); }
+.account-import-dialog .section-head { align-items: flex-start; gap: 1rem; }
+.account-import-dialog .section-head button { flex-shrink: 0; }
+.account-import-field { display: flex; flex-direction: column; gap: .6rem; margin-top: 1.1rem; min-width: 0; }
+.account-import-field > label { font-size: .85rem; font-weight: 600; color: var(--text); }
+.account-import-field textarea { width: 100%; resize: vertical; min-height: 180px; padding: 1rem; border: 1px solid var(--border-focus); border-radius: .75rem; background: var(--input-bg); color: var(--text); font: .85rem/1.7 monospace; }
+.account-import-field textarea:focus { outline: 2px solid var(--primary); outline-offset: 2px; }
+.account-import-files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.account-import-files .account-import-field { padding: 1rem; background: var(--input-bg); border: 1px solid var(--border); border-radius: .75rem; }
+.account-import-files input { width: 100%; min-width: 0; font-size: .8rem; }
+.account-import-files input::file-selector-button { padding: .45rem .65rem; margin-right: .6rem; background: var(--card-hover); border: 1px solid var(--border-focus); border-radius: .4rem; color: var(--text); cursor: pointer; }
+.account-import-footer { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1.25rem; }
+.account-import-dialog summary { cursor: pointer; color: var(--warn); font-size: .85rem; }
+@media (max-width: 600px) { .account-import-files { grid-template-columns: 1fr; gap: 0; } }
 .pool-upload-actions, .pool-job-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: .7rem 0; }
 .pool-file-label { padding: .75rem; border: 1px dashed var(--border-focus); border-radius: .7rem; max-width: 100%; }
 .pool-file-label input { display: block; margin-top: .5rem; max-width: 100%; }

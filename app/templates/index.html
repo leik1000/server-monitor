@@ -49,8 +49,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
         </div>
         <div class="metric-info">
-          <span>监控项目</span>
-          <strong id="targetCount">-</strong>
+          <span>中央号池账号数量</span>
+          <strong id="centralAccountCount" title="中央号池剩余总量，包含已预占及待处理账号">-</strong>
         </div>
       </div>
       <div class="card metric">
@@ -58,8 +58,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
         </div>
         <div class="metric-info">
-          <span>在线项目</span>
-          <strong id="onlineCount">-</strong>
+          <span>服务器所有账号数量</span>
+          <strong id="serverAccountCount">-</strong>
         </div>
       </div>
       <div class="card metric">
@@ -94,26 +94,41 @@
     <section class="card pool-card" id="accountPoolCard">
       <div class="section-head">
         <div><h2>中央账号池</h2><p>上传账号 JSON，按服务器分配；确认入库后自动移出号池。</p></div>
+        <button id="openAccountImportBtn" type="button">导入账号</button>
       </div>
       <div id="cookiePoolSummary" class="pool-stats" aria-live="polite">正在读取库存...</div>
-      <details class="pool-upload">
-        <summary>批量上传账号 / 粘贴导入</summary>
-        <p class="pool-help">支持 available_account 目录中的账号 JSON、JSON 数组和每行一个 Cookie。选择文件夹可一次导入全部账号，自动分批上传并去重。</p>
-        <div class="pool-upload-actions">
-          <label class="pool-file-label">选择账号文件<input id="accountFiles" type="file" accept=".json,.txt" multiple /></label>
-          <label class="pool-file-label">选择账号文件夹<input id="accountFolder" type="file" webkitdirectory multiple /></label>
-        </div>
-        <label for="cookieImportText" class="pool-help">或粘贴账号内容</label>
-        <textarea id="cookieImportText" rows="4" placeholder="粘贴完整账号 JSON、{items: [...]} 或每行一个 Cookie"></textarea>
-        <button id="importCookiesBtn" type="button">导入到号池</button>
-      </details>
       <p id="cookieFormMessage" class="form-message" role="status"></p>
-      <details id="uploadErrorDetails" hidden><summary>查看上传错误</summary><pre id="uploadErrors"></pre></details>
       <details id="poolJobsPanel" open>
         <summary>导入任务 <span id="dispatchConcurrency"></span></summary>
         <div id="importJobs" class="pool-jobs">暂无任务</div>
       </details>
     </section>
+
+    <dialog id="accountImportDialog" class="pool-dialog account-import-dialog" aria-labelledby="accountImportTitle">
+      <div class="section-head">
+        <div><h2 id="accountImportTitle">中央号池账号导入</h2><p class="pool-help">批量保存账号，自动去重，随时为服务器补号。</p></div>
+        <button id="closeAccountImportBtn" class="secondary small" type="button">关闭</button>
+      </div>
+      <div class="account-import-field">
+        <label for="cookieImportText">账号内容（支持单个或批量）</label>
+        <textarea id="cookieImportText" rows="7" placeholder='支持以下格式：&#10;1. 完整账号 JSON：{"email":"account@example.com","cookie":"k=v;..."}&#10;2. 批量 JSON 数组或 {"items": [...]}&#10;3. 每行一个 Cookie Header'></textarea>
+        <p class="pool-help">可直接使用 available_account 中的账号资料。导入中央号池后，在服务器卡片点击“补号”进行分配。</p>
+      </div>
+      <div class="account-import-files">
+        <div class="account-import-field">
+          <label for="accountFiles">上传账号文件（支持多选）</label>
+          <input id="accountFiles" type="file" accept=".json,.txt" multiple />
+        </div>
+        <div class="account-import-field">
+          <label for="accountFolder">上传整个账号文件夹</label>
+          <input id="accountFolder" type="file" webkitdirectory multiple />
+        </div>
+      </div>
+      <p class="pool-help">选择文件或文件夹后自动上传，按批次处理。粘贴内容请点击下方“导入到号池”。</p>
+      <p id="accountUploadMessage" class="form-message" role="status"></p>
+      <details id="uploadErrorDetails" hidden><summary>查看上传错误</summary><pre id="uploadErrors"></pre></details>
+      <div class="account-import-footer"><button id="importCookiesBtn" type="button">导入到号池</button></div>
+    </dialog>
 
     <dialog id="dispatchDialog" class="pool-dialog">
       <form id="dispatchForm">

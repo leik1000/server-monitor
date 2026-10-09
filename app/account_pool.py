@@ -9,6 +9,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -139,6 +140,7 @@ class AccountPool:
                 CREATE TABLE IF NOT EXISTS delivered (
                     fingerprint TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL,
                     target_id TEXT NOT NULL, profile_id TEXT NOT NULL, created_at REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS delivered_created_at ON delivered(created_at);
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY, group_id TEXT NOT NULL, target_id TEXT NOT NULL,
                     target_name TEXT NOT NULL, base_url TEXT NOT NULL, batch_size INTEGER NOT NULL,
@@ -214,10 +216,16 @@ class AccountPool:
                 "invalid_count": invalid, "errors": errors}
 
     def summary(self):
+        # Use Beijing calendar days regardless of the host/container timezone.
+        day_start = datetime.fromtimestamp(time.time(), timezone(timedelta(hours=8))).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
         with self.db() as conn:
             states = dict(conn.execute("SELECT state,COUNT(*) FROM accounts GROUP BY state").fetchall())
             items = dict(conn.execute("SELECT state,COUNT(*) FROM job_items WHERE state IN ('unknown','failed') GROUP BY state").fetchall())
-            assigned = conn.execute("SELECT COUNT(*) FROM delivered").fetchone()[0]
+            assigned = conn.execute(
+                "SELECT COUNT(*) FROM delivered WHERE created_at>=? AND created_at<?",
+                (day_start.timestamp(), day_end.timestamp())).fetchone()[0]
         return {"total": sum(states.values()), "available": states.get("available", 0),
                 "assigning": states.get("reserved", 0) - items.get("unknown", 0) - items.get("failed", 0),
                 "unknown": items.get("unknown", 0), "failed": items.get("failed", 0),

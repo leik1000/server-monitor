@@ -3,8 +3,10 @@ import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 
@@ -28,6 +30,22 @@ class PoolFixture(unittest.TestCase):
 
 
 class PoolTests(PoolFixture):
+    def test_assigned_summary_uses_beijing_calendar_day(self):
+        start = datetime.fromisoformat("2026-10-09T00:00:00+08:00").timestamp()
+        timestamps = [start - 1, start, start + 3600, start + 86399, start + 86400]
+        with self.pool.db() as conn:
+            conn.executemany("INSERT INTO delivered VALUES (?,?,?,?,?)",
+                             [(str(i), str(i), "server-a", "profile", ts)
+                              for i, ts in enumerate(timestamps)])
+        with patch("app.account_pool.time.time", return_value=start + 7200):
+            self.assertEqual(self.pool.summary()["assigned"], 3)
+        with patch("app.account_pool.time.time", return_value=start + 86400):
+            self.assertEqual(self.pool.summary()["assigned"], 1)
+        with patch("app.account_pool.time.time", return_value=start + 172800):
+            self.assertEqual(self.pool.summary()["assigned"], 0)
+        with self.pool.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delivered").fetchone()[0], 5)
+
     def test_account_file_and_export_formats(self):
         account = {"email": "USER@example.test", "password": "must-not-persist", "cookie": "session=primary",
                    "_usage": {"cookie_header": "session=fallback"}, "session_cookies": {"session": "last-fallback"}}

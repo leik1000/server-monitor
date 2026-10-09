@@ -27,7 +27,7 @@
       $("centralAccountCount").textContent = fmtNumber(summary.total);
       $("cookiePoolSummary").innerHTML = [
         ["可分配账号", summary.available, "pool-available"], ["排队 / 导入中", summary.assigning, ""],
-        ["待确认", summary.unknown, ""], ["失败待处理", summary.failed, ""], ["累计已分配", summary.assigned, ""],
+        ["待确认", summary.unknown, ""], ["失败待处理", summary.failed, ""], ["今日已分配", summary.assigned, ""],
         ...(summary.legacy_review ? [["旧号池待核对", summary.legacy_review, ""]] : []),
       ].map(([label, value, cls]) => `<div class="pool-stat ${cls}"><span>${label}</span><strong>${fmtNumber(value)}</strong></div>`).join("");
       if (summary.assigning > 0 || summary.unknown > 0) delay = 2000;

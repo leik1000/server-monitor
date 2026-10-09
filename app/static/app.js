@@ -17,10 +17,7 @@ const els = {
   targetGroup: document.getElementById("targetGroup"),
   targetNote: document.getElementById("targetNote"),
   targetRefillEnabled: document.getElementById("targetRefillEnabled"),
-  targetRefillMode: document.getElementById("targetRefillMode"),
   targetRefillThreshold: document.getElementById("targetRefillThreshold"),
-  targetRefillTarget: document.getElementById("targetRefillTarget"),
-  targetRefillCount: document.getElementById("targetRefillCount"),
   targetRefillBatchSize: document.getElementById("targetRefillBatchSize"),
   cookieImportText: document.getElementById("cookieImportText"),
   importCookiesBtn: document.getElementById("importCookiesBtn"),
@@ -254,9 +251,16 @@ function renderTargets(targets = []) {
     const refillBtn = card.querySelector(".btn-refill");
     if (refillBtn) {
       refillBtn.dataset.id = target.id || "";
-      refillBtn.disabled = !target.enabled;
-      refillBtn.setAttribute("aria-label", `为 ${target.name || "当前服务器"} 补号`);
+      refillBtn.disabled = !target.enabled && !target.refill_enabled;
+      refillBtn.textContent = target.refill_enabled ? "自动补号" : "补号";
+      refillBtn.classList.toggle("auto-enabled", Boolean(target.refill_enabled));
+      refillBtn.title = target.refill_enabled ? `可用账号低于 ${target.refill_threshold} 时补至 ${target.refill_target}；点击设置或关闭` : "设置手动或自动补号";
+      refillBtn.setAttribute("aria-label", `${target.name || "当前服务器"}：${refillBtn.title}`);
     }
+    const refillStatus = card.querySelector(".refill-status");
+    refillStatus.hidden = !target.refill_enabled;
+    refillStatus.textContent = target.refill_enabled
+      ? `可用账号阈值 ${fmtNumber(target.refill_threshold)} · ${target.refill_status?.message || "等待后台检查"}` : "";
     
     els.targets.appendChild(node);
   }
@@ -300,10 +304,10 @@ function getFormPayload() {
     note: els.targetNote.value.trim(),
     enabled: true,
     refill_enabled: els.targetRefillEnabled.value === "true",
-    refill_mode: els.targetRefillMode.value,
+    refill_mode: "target",
     refill_threshold: Number(els.targetRefillThreshold.value || 0),
-    refill_target: Number(els.targetRefillTarget.value || 0),
-    refill_count: Number(els.targetRefillCount.value || 0),
+    refill_target: Number(els.targetRefillThreshold.value || 0),
+    refill_count: 0,
     refill_batch_size: Number(els.targetRefillBatchSize.value || 10),
   };
 }
@@ -317,10 +321,8 @@ function resetForm() {
   els.cancelEditBtn.hidden = true;
   els.formMessage.textContent = "";
   els.targetRefillEnabled.value = "false";
-  els.targetRefillMode.value = "target";
   els.targetRefillThreshold.value = "";
-  els.targetRefillTarget.value = "";
-  els.targetRefillCount.value = "";
+  updateRefillFields();
   els.targetRefillBatchSize.value = "10";
 }
 
@@ -339,19 +341,25 @@ function startEdit(targetId) {
   els.targetGroup.value = target.group || "";
   els.targetNote.value = target.note || "";
   els.targetRefillEnabled.value = String(Boolean(target.refill_enabled));
-  els.targetRefillMode.value = target.refill_mode || "target";
   els.targetRefillThreshold.value = target.refill_threshold || "";
-  els.targetRefillTarget.value = target.refill_target || "";
-  els.targetRefillCount.value = target.refill_count || "";
+  updateRefillFields();
   els.targetRefillBatchSize.value = target.refill_batch_size || 10;
   els.saveTargetBtn.textContent = "保存修改";
   els.cancelEditBtn.hidden = false;
   els.formMessage.textContent = `正在编辑：${target.name || "-"}`;
+  if (target.refill_enabled && (target.refill_mode !== "target" || target.refill_target !== target.refill_threshold || !target.refill_threshold)) {
+    els.formMessage.textContent += "；保存后将使用新的可用账号阈值规则，补齐目标等于阈值。";
+  }
   
   // 自动展开管理面板
   els.managerCard.classList.remove("collapsed");
   els.targetName.focus();
 }
+
+function updateRefillFields() {
+  els.targetRefillThreshold.required = els.targetRefillEnabled.value === "true";
+}
+els.targetRefillEnabled.addEventListener("change", updateRefillFields);
 
 async function saveTarget(event) {
   event.preventDefault();

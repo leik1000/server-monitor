@@ -7,6 +7,7 @@
   let refreshPending = false;
   let timer;
   let refillTarget = null;
+  let refillBusy = false;
 
   async function api(path, payload) {
     const response = await fetch(path, payload === undefined ? {} : {
@@ -192,7 +193,38 @@
   function updateTotal() {
     const total = Number($("dispatchCount").value || 0);
     $("dispatchAvailable").textContent = `号池可分配：${fmtNumber(available)}`;
-    $("dispatchTotal").textContent = `本次补号 ${fmtNumber(total)} 个${total > available ? "，库存不足" : ""}`;
+    const automatic = $("dispatchMode").value === "auto";
+    $("dispatchManualFields").hidden = automatic;
+    $("dispatchAutoFields").hidden = !automatic;
+    $("dispatchCount").disabled = automatic || refillBusy;
+    $("dispatchCount").required = !automatic;
+    $("dispatchThreshold").disabled = !automatic || refillBusy;
+    $("dispatchThreshold").required = automatic;
+    $("submitDispatchBtn").textContent = automatic ? (refillTarget?.refill_enabled ? "保存自动补号设置" : "保存并开启") : "确认补号";
+    $("disableAutoRefillBtn").hidden = !refillTarget?.refill_enabled;
+    $("dispatchModeNotice").textContent = refillTarget?.refill_enabled
+      ? (automatic ? "关闭自动补号后不再创建新任务，已创建的任务继续执行。" : "确认手动补号时将关闭自动补号；已创建的任务继续执行。") : "";
+    $("dispatchTotal").textContent = automatic
+      ? `可用账号低于 ${fmtNumber($("dispatchThreshold").value)} 时触发；补充量会扣除待激活账号。`
+      : `本次补号 ${fmtNumber(total)} 个${total > available ? "，库存不足" : ""}`;
+  }
+
+  function setRefillBusy(busy) {
+    refillBusy = busy;
+    $("submitDispatchBtn").disabled = busy || !refillTarget || !refillTarget.enabled;
+    $("disableAutoRefillBtn").disabled = busy || !refillTarget;
+    $("dispatchMode").disabled = busy || !refillTarget;
+    $("closeDispatchBtn").disabled = busy;
+    updateTotal();
+  }
+
+  async function saveRefillSettings(enabled) {
+    const result = await api(`/api/targets/${encodeURIComponent(refillTarget.id)}/refill-settings`, {
+      enabled, ...(enabled ? { threshold: Number($("dispatchThreshold").value) } : {}),
+    });
+    refillTarget = result.target;
+    await loadStatus(false);
+    return result;
   }
 
   async function openRefill(targetId) {
@@ -201,34 +233,62 @@
     $("dispatchMessage").textContent = "";
     $("dispatchTargetName").textContent = "正在读取服务器信息...";
     $("dispatchCount").value = "";
+    $("dispatchMode").value = "manual";
+    $("dispatchThreshold").value = "";
     $("dispatchAvailable").textContent = "正在读取库存...";
     $("dispatchTotal").textContent = "";
-    $("submitDispatchBtn").disabled = true;
+    setRefillBusy(true);
     $("dispatchDialog").showModal();
     try {
       const [result, summary] = await Promise.all([api("/api/targets"), api("/api/cookies")]);
       const target = result.targets.find((t) => t.id === targetId);
-      if (!target || !target.enabled) throw new Error("该服务器不存在或已停用");
+      if (!target) throw new Error("该服务器不存在");
       refillTarget = target;
+      $("dispatchMode").value = target.refill_enabled ? "auto" : "manual";
+      $("dispatchThreshold").value = target.refill_threshold || "";
       available = summary.available;
       $("dispatchTargetName").textContent = `目标服务器：${target.name}（${target.base_url}）`;
       updateTotal();
-      $("submitDispatchBtn").disabled = false;
-      $("dispatchCount").focus();
+      if (target.refill_enabled && (target.refill_mode !== "target" || target.refill_target !== target.refill_threshold || !target.refill_threshold)) {
+        $("dispatchMessage").textContent = "检测到旧补号规则。保存后改为按可用账号阈值触发，并补齐至该阈值。";
+      }
+      if (!target.enabled) $("dispatchMessage").textContent = "服务器已停用，仍可关闭自动补号。";
     } catch (error) { $("dispatchMessage").textContent = error.message; }
+    finally {
+      setRefillBusy(false);
+      ($("dispatchMode").value === "auto" ? $("dispatchThreshold") : $("dispatchCount")).focus();
+    }
   }
 
   $("dispatchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!refillTarget || $("submitDispatchBtn").disabled) return;
     const target = refillTarget;
+    const automatic = $("dispatchMode").value === "auto";
     const count = Number($("dispatchCount").value);
-    if (!Number.isInteger(count) || count < 1 || count > 100000) {
+    const threshold = Number($("dispatchThreshold").value);
+    if (automatic && (!Number.isInteger(threshold) || threshold < 1 || threshold > 100000)) {
+      $("dispatchMessage").textContent = "可用账号阈值必须为 1–100000 之间的整数";
+      return;
+    }
+    if (!automatic && (!Number.isInteger(count) || count < 1 || count > 100000)) {
       $("dispatchMessage").textContent = "请输入 1–100000 之间的整数";
       return;
     }
-    $("submitDispatchBtn").disabled = true;
+    if (!automatic && count > available) {
+      $("dispatchMessage").textContent = "号池库存不足，请先导入账号";
+      return;
+    }
+    setRefillBusy(true);
+    $("dispatchMessage").textContent = "正在保存...";
     try {
+      if (automatic) {
+        await saveRefillSettings(true);
+        $("dispatchDialog").close();
+        $("cookieFormMessage").textContent = `已为 ${target.name} 开启自动补号，可用账号低于 ${threshold} 时自动补齐。`;
+        return;
+      }
+      if (target.refill_enabled) await saveRefillSettings(false);
       const result = await api("/api/import-jobs", {
         allocations: [{ target_id: target.id, count }],
         batch_size: target.refill_batch_size || 50,
@@ -236,8 +296,21 @@
       $("dispatchDialog").close();
       $("cookieFormMessage").textContent = `已为 ${target.name} 创建补号任务，共 ${result.total} 个账号，后台处理中。`;
       await refresh();
+    } catch (error) {
+      $("dispatchMessage").textContent = `${!automatic && target.refill_enabled && !refillTarget.refill_enabled ? "自动补号已关闭；" : ""}${error.message}`;
+    }
+    finally { setRefillBusy(false); }
+  });
+
+  $("disableAutoRefillBtn").addEventListener("click", async () => {
+    if (refillBusy || !refillTarget) return;
+    setRefillBusy(true);
+    try {
+      await saveRefillSettings(false);
+      $("dispatchMode").value = "manual";
+      $("dispatchMessage").textContent = "自动补号已关闭，已创建的任务继续执行。";
     } catch (error) { $("dispatchMessage").textContent = error.message; }
-    finally { $("submitDispatchBtn").disabled = false; }
+    finally { setRefillBusy(false); }
   });
 
   $("clearAccountPoolBtn").addEventListener("click", async () => {
@@ -264,6 +337,9 @@
 
   $("closeDispatchBtn").addEventListener("click", () => $("dispatchDialog").close());
   $("dispatchCount").addEventListener("input", updateTotal);
+  $("dispatchThreshold").addEventListener("input", updateTotal);
+  $("dispatchMode").addEventListener("change", updateTotal);
+  $("dispatchDialog").addEventListener("cancel", (event) => { if (refillBusy) event.preventDefault(); });
   $("accountFiles").addEventListener("change", importFiles);
   $("openAccountImportBtn").addEventListener("click", () => {
     $("accountImportDialog").showModal();

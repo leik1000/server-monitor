@@ -35,6 +35,11 @@
 .dispatch-batch input { width: 150px; flex-shrink: 0; }
 #dispatchTargetName { overflow-wrap: anywhere; }
 .dispatch-batch { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; }
+.btn-refill.auto-enabled { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.refill-status { margin-bottom: 0; }
+#dispatchDialog [hidden] { display: none !important; }
+#dispatchDialog input, #dispatchDialog select { padding: .65rem; color: var(--text); background: var(--input-bg); border: 1px solid var(--border-focus); border-radius: .5rem; }
+#dispatchDialog .section-head { gap: 1rem; }
 .pool-detail-item { border-bottom: 1px solid var(--border); padding: .75rem 0; overflow-wrap: anywhere; }
 .pool-detail-item span { display: block; color: var(--text-muted); font-size: .8rem; }
 .pool-detail-item p { color: var(--warn); font-size: .8rem; }

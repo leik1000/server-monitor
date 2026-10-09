@@ -129,15 +129,29 @@
       <div class="account-import-footer"><button id="importCookiesBtn" type="button">导入到号池</button></div>
     </dialog>
 
-    <dialog id="dispatchDialog" class="pool-dialog">
+    <dialog id="dispatchDialog" class="pool-dialog" aria-labelledby="dispatchTitle">
       <form id="dispatchForm">
-        <div class="section-head"><div><h2>补号</h2><p id="dispatchAvailable"></p></div><button id="closeDispatchBtn" type="button" class="secondary">关闭</button></div>
+        <div class="section-head"><div><h2 id="dispatchTitle">补号设置</h2><p id="dispatchAvailable"></p></div><button id="closeDispatchBtn" type="button" class="secondary">关闭</button></div>
         <p id="dispatchTargetName" class="pool-help"></p>
-        <p class="pool-help">从中央号池取出指定数量的 Cookie，导入当前服务器。后台自动分批执行。</p>
-        <label class="dispatch-batch" for="dispatchCount">补号数量 <input id="dispatchCount" type="number" min="1" max="100000" step="1" placeholder="输入数量" required /></label>
+        <label class="dispatch-batch" for="dispatchMode">补号方式
+          <select id="dispatchMode"><option value="manual">手动补号</option><option value="auto">自动补号</option></select>
+        </label>
+        <div id="dispatchManualFields">
+          <p class="pool-help">从中央号池取出指定数量的 Cookie，导入当前服务器。后台自动分批执行。</p>
+          <label class="dispatch-batch" for="dispatchCount">补号数量 <input id="dispatchCount" type="number" min="1" max="100000" step="1" placeholder="输入数量" required /></label>
+        </div>
+        <div id="dispatchAutoFields" hidden>
+          <label class="dispatch-batch" for="dispatchThreshold">可用账号阈值 <input id="dispatchThreshold" type="number" min="1" max="100000" step="1" placeholder="例如 100" /></label>
+          <p class="pool-help">以卡片上的“可用账号”为准，不是账号总数。低于阈值时补齐至阈值，等于阈值不补号。已导入的待激活账号会从补充量中扣除，避免重复补号。</p>
+          <p class="pool-help">库存不足先补现有库存。后台持续检查，关闭网页不影响执行。</p>
+        </div>
+        <p id="dispatchModeNotice" class="pool-help"></p>
         <p id="dispatchTotal" class="pool-help"></p>
         <p id="dispatchMessage" class="form-message" role="status"></p>
-        <button id="submitDispatchBtn" type="submit">确认补号</button>
+        <div class="pool-job-actions">
+          <button id="submitDispatchBtn" type="submit">确认补号</button>
+          <button id="disableAutoRefillBtn" type="button" class="danger" hidden>关闭自动补号</button>
+        </div>
       </form>
     </dialog>
 
@@ -184,30 +198,15 @@
           <input id="targetNote" name="note" placeholder="可选备注信息" />
         </label>
         <label>
-          <span>自动补号</span>
+          <span>补号方式</span>
           <select id="targetRefillEnabled" name="refill_enabled">
-            <option value="false">关闭</option>
-            <option value="true">开启</option>
+            <option value="false">手动补号</option>
+            <option value="true">自动补号</option>
           </select>
         </label>
         <label>
-          <span>补号模式</span>
-          <select id="targetRefillMode" name="refill_mode">
-            <option value="target">补到目标数量</option>
-            <option value="count">固定补充数量</option>
-          </select>
-        </label>
-        <label>
-          <span>触发阈值</span>
-          <input id="targetRefillThreshold" type="number" min="0" placeholder="0 表示不限制" />
-        </label>
-        <label>
-          <span>目标账号数</span>
-          <input id="targetRefillTarget" type="number" min="0" placeholder="例如 30" />
-        </label>
-        <label>
-          <span>固定补充数量</span>
-          <input id="targetRefillCount" type="number" min="0" placeholder="例如 5" />
+          <span>可用账号阈值（低于时补齐）</span>
+          <input id="targetRefillThreshold" type="number" min="1" max="100000" step="1" placeholder="例如 100，不是账号总数" />
         </label>
         <label>
           <span>单批上限</span>
@@ -307,6 +306,7 @@
       </div>
 
       <p class="error-text"></p>
+      <p class="refill-status pool-help" hidden></p>
     </article>
   </template>
 

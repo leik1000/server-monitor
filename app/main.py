@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 import zlib
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,7 @@ if SESSION_MAX_AGE <= 0:
 SESSION_DB_PATH = BASE_DIR / "config" / "sessions.sqlite3"
 
 SYSTEM_CONFIG_PATH = BASE_DIR / "config" / "system.json"
+target_config_lock = asyncio.Lock()
 
 def load_system_credentials() -> tuple[str, str]:
     if SYSTEM_CONFIG_PATH.exists():
@@ -206,6 +207,7 @@ class TargetClient:
     async def collect(self) -> dict[str, Any]:
         started = time.time()
         payload: dict[str, Any] = {
+            **target_to_public_dict(self.target),
             "id": self.target.id,
             "name": self.target.name,
             "base_url": self.target.base_url,
@@ -361,6 +363,9 @@ def target_from_payload(
         raise ValueError("username is required")
     if require_credentials and not password:
         raise ValueError("password is required")
+    threshold = payload.get("refill_threshold", existing.refill_threshold if existing else 0)
+    if type(threshold) is not int or not 0 <= threshold <= 100000:
+        raise ValueError("补号阈值必须为 0–100000 之间的整数")
     return Target(
         id=normalize_target_id(target_id or payload.get("id")),
         name=name,
@@ -373,7 +378,7 @@ def target_from_payload(
         password=password,
         refill_enabled=parse_bool(payload.get("refill_enabled"), existing.refill_enabled if existing else False),
         refill_mode=str(payload.get("refill_mode") or (existing.refill_mode if existing else "target")).strip().lower(),
-        refill_threshold=max(0, int(payload.get("refill_threshold") or (existing.refill_threshold if existing else 0))),
+        refill_threshold=threshold,
         refill_target=max(0, int(payload.get("refill_target") or (existing.refill_target if existing else 0))),
         refill_count=max(0, int(payload.get("refill_count") or (existing.refill_count if existing else 0))),
         refill_batch_size=max(1, min(100, int(payload.get("refill_batch_size") or (existing.refill_batch_size if existing else 10)))),
@@ -450,6 +455,8 @@ class MonitorState:
         self._refresh_lock = asyncio.Lock()
         self._refill_locks: set[str] = set()
         self._last_refill_at: dict[str, float] = {}
+        self._refill_tasks: dict[str, asyncio.Task] = {}
+        self.refill_status: dict[str, dict[str, Any]] = {}
 
     async def start(self) -> None:
         self.reload_targets()
@@ -459,6 +466,11 @@ class MonitorState:
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        for task in self._refill_tasks.values():
+            task.cancel()
+        await asyncio.gather(*self._refill_tasks.values(), return_exceptions=True)
+        self._refill_tasks.clear()
         for client in self.clients.values():
             await client.close()
         self.clients.clear()
@@ -499,6 +511,7 @@ class MonitorState:
                 if isinstance(result, Exception):
                     targets.append(
                         {
+                            **target_to_public_dict(client.target),
                             "id": client.target.id,
                             "name": client.target.name,
                             "base_url": client.target.base_url,
@@ -521,7 +534,21 @@ class MonitorState:
                 "refresh_seconds": REFRESH_SECONDS,
             }
             await self.auto_refill(targets)
+            self.sync_refill_snapshot()
             return self.snapshot
+
+    def sync_refill_snapshot(self) -> None:
+        configs = {t.id: t for t in load_targets()}
+        for item in self.snapshot["targets"]:
+            target = configs.get(item.get("id"))
+            if target:
+                item.update({k: v for k, v in target_to_public_dict(target).items() if k.startswith("refill_")})
+                item["refill_status"] = self.refill_status.get(target.id, {}) if target.refill_enabled else {}
+
+    def schedule_refill(self, target_id: str) -> None:
+        task = self._refill_tasks.get(target_id)
+        if task is None or task.done():
+            self._refill_tasks[target_id] = asyncio.create_task(self.safe_auto_refill(target_id))
 
     async def refill(self, target_id: str, count: int | None = None) -> dict[str, Any]:
         if target_id in self._refill_locks:
@@ -531,6 +558,11 @@ class MonitorState:
             raise ValueError("target not found")
         self._refill_locks.add(target_id)
         try:
+            automatic = count is None
+            if automatic and not target.refill_enabled:
+                return {"status": "disabled", "message": "自动补号已关闭"}
+            if automatic and (target.refill_mode != "target" or not 0 < target.refill_threshold <= target.refill_target <= 100000):
+                return {"status": "configuration", "message": "旧补号规则需重新设置可用账号阈值"}
             client = self.clients.get(target_id)
             if client is None:
                 raise ValueError("target client not found")
@@ -543,17 +575,30 @@ class MonitorState:
                 client.get_json("/api/v1/tokens?page=1&page_size=1"),
             )
             pool_summary = profile_payload.get("pool_summary") or {}
-            active = normalize_token_summary(token_payload)["active"] + int(pool_summary.get("pending") or 0)
-            if count is None:
-                if target.refill_mode == "count":
-                    count = target.refill_count
-                elif target.refill_threshold and active > target.refill_threshold:
-                    return {"status": "skipped", "active": active, "message": "当前账号数高于补号阈值"}
-                else:
-                    count = max(0, target.refill_target - active)
+            # Missing/invalid metrics must never be interpreted as zero available accounts.
+            summary = token_payload.get("summary")
+            raw_active = summary.get("active", summary.get("active_count")) if isinstance(summary, dict) else None
+            raw_pending = pool_summary.get("pending")
+            if type(raw_active) is not int or raw_active < 0 or type(raw_pending) is not int or raw_pending < 0:
+                raise ValueError("无法读取可用或待激活账号数量")
+            active, pending = raw_active, raw_pending
+            if automatic:
+                if active >= target.refill_threshold:
+                    return {"status": "satisfied", "active": active, "message": "可用账号已达到补号阈值"}
+                # Pending is only an in-transit deduction, never the trigger metric.
+                count = max(0, target.refill_target - active - pending)
             if not count or count <= 0:
-                return {"status": "skipped", "message": "现有账号（含待激活）已满足目标"}
-            return await asyncio.to_thread(cookie_pool.create_jobs, [(target, int(count))], target.refill_batch_size, "auto")
+                return {"status": "activating", "message": f"可用账号 {active}，等待 {pending} 个已导入账号激活"}
+            async with target_config_lock:
+                current = next((t for t in load_targets() if t.id == target_id), None)
+                if current != target or (automatic and not current.refill_enabled):
+                    return {"status": "changed", "message": "补号设置已变化，等待下次检查"}
+                result = await asyncio.to_thread(cookie_pool.create_jobs, [(target, int(count))], target.refill_batch_size, "auto" if automatic else "manual")
+                if result["status"] == "empty":
+                    return result
+                result["message"] = (f"号池不足，已先补充 {result['total']} 个账号" if result.get("shortage")
+                                     else f"已创建补号任务：{result['total']} 个账号")
+                return result
         finally:
             self._last_refill_at[target_id] = time.time()
             self._refill_locks.discard(target_id)
@@ -562,19 +607,27 @@ class MonitorState:
         configs = {target.id: target for target in load_targets() if target.refill_enabled}
         for item in targets:
             target = configs.get(item.get("id"))
-            if target and item.get("online"):
+            if target and target.enabled and item.get("online"):
                 active = int((item.get("token_summary") or {}).get("active") or 0)
-                should_run = target.refill_mode == "count" or (target.refill_target > active and (not target.refill_threshold or active <= target.refill_threshold))
+                if target.refill_mode != "target" or not 0 < target.refill_threshold <= target.refill_target <= 100000:
+                    self.refill_status[target.id] = {"status": "configuration", "message": "旧补号规则需重新设置可用账号阈值"}
+                    continue
+                should_run = active < target.refill_threshold
                 recent = time.time() - self._last_refill_at.get(target.id, 0)
                 if should_run and recent >= REFILL_INTERVAL_SECONDS and target.id not in self._refill_locks:
-                    asyncio.create_task(self.safe_auto_refill(target.id))
+                    self.schedule_refill(target.id)
+                elif not should_run:
+                    self.refill_status[target.id] = {"status": "satisfied", "message": "可用账号已达到补号阈值"}
+            elif target:
+                self.refill_status[target.id] = {"status": "offline", "message": "服务器离线或已停用，暂停自动补号"}
 
     async def safe_auto_refill(self, target_id):
         try:
-            await self.refill(target_id)
+            self.refill_status[target_id] = await self.refill(target_id)
         except Exception:
-            # Next scheduled cycle retries; no unhandled task/credential-bearing errors.
-            pass
+            self.refill_status[target_id] = {"status": "error", "message": "补号检查失败，请检查服务器连接与账号统计接口；稍后重试"}
+        finally:
+            self.sync_refill_snapshot()
 
 
 def build_summary(targets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -702,10 +755,12 @@ async def add_monitor_target(request: Request) -> dict[str, Any]:
         payload = await request.json()
         if not isinstance(payload, dict):
             raise ValueError("request body must be an object")
-        targets = load_targets()
-        target = target_from_payload(payload, target_id=normalize_target_id())
-        targets.append(target)
-        save_targets(targets)
+        async with target_config_lock:
+            targets = load_targets()
+            target = target_from_payload(payload, target_id=normalize_target_id())
+            validate_refill_settings(target)
+            targets.append(target)
+            save_targets(targets)
         await monitor_state.refresh()
         return {"status": "ok", "target": target_to_public_dict(target)}
     except ValueError as exc:
@@ -718,32 +773,35 @@ async def update_monitor_target(target_id: str, request: Request) -> dict[str, A
         payload = await request.json()
         if not isinstance(payload, dict):
             raise ValueError("request body must be an object")
-        targets = load_targets()
-        for index, target in enumerate(targets):
-            if target.id == target_id:
-                updated = target_from_payload(
-                    payload, target_id=target.id, existing=target
-                )
-                if updated.base_url.rstrip("/") != target.base_url.rstrip("/") and await asyncio.to_thread(cookie_pool.has_open_job, target.id):
-                    raise ValueError("该服务器存在未完成的导入任务，不能修改地址；请先完成或处理任务")
-                targets[index] = updated
-                save_targets(targets)
-                await monitor_state.refresh()
-                return {"status": "ok", "target": target_to_public_dict(updated)}
-        raise HTTPException(status_code=404, detail="target not found")
+        async with target_config_lock:
+            targets = load_targets()
+            for index, target in enumerate(targets):
+                if target.id == target_id:
+                    updated = target_from_payload(payload, target_id=target.id, existing=target)
+                    validate_refill_settings(updated)
+                    if updated.base_url.rstrip("/") != target.base_url.rstrip("/") and await asyncio.to_thread(cookie_pool.has_open_job, target.id):
+                        raise ValueError("该服务器存在未完成的导入任务，不能修改地址；请先完成或处理任务")
+                    targets[index] = updated
+                    save_targets(targets)
+                    break
+            else:
+                raise HTTPException(status_code=404, detail="target not found")
+        await monitor_state.refresh()
+        return {"status": "ok", "target": target_to_public_dict(updated)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/targets/{target_id}", dependencies=[Depends(verify_api_auth)])
 async def delete_monitor_target(target_id: str) -> dict[str, Any]:
-    if await asyncio.to_thread(cookie_pool.has_open_job, target_id):
-        raise HTTPException(status_code=409, detail="该服务器存在未完成的导入任务，请先处理后再删除")
-    targets = load_targets()
-    next_targets = [target for target in targets if target.id != target_id]
-    if len(next_targets) == len(targets):
-        raise HTTPException(status_code=404, detail="target not found")
-    save_targets(next_targets)
+    async with target_config_lock:
+        if await asyncio.to_thread(cookie_pool.has_open_job, target_id):
+            raise HTTPException(status_code=409, detail="该服务器存在未完成的导入任务，请先处理后再删除")
+        targets = load_targets()
+        next_targets = [target for target in targets if target.id != target_id]
+        if len(next_targets) == len(targets):
+            raise HTTPException(status_code=404, detail="target not found")
+        save_targets(next_targets)
     await monitor_state.refresh()
     return {"status": "ok"}
 
@@ -866,6 +924,47 @@ async def import_job_action(job_id: str, action: str):
     try:
         await asyncio.to_thread(cookie_pool.action, job_id, action)
         return {"status": "ok"}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def validate_refill_settings(target: Target) -> None:
+    if target.refill_enabled and (target.refill_mode != "target" or not 0 < target.refill_threshold <= target.refill_target <= 100000):
+        raise ValueError("自动补号需要 1–100000 的可用账号阈值，目标数量不得小于阈值")
+
+
+@app.post("/api/targets/{target_id}/refill-settings", dependencies=[Depends(verify_api_auth)])
+async def update_refill_settings(target_id: str, request: Request) -> dict[str, Any]:
+    try:
+        payload = await limited_json(request)
+        if not isinstance(payload, dict) or type(payload.get("enabled")) is not bool:
+            raise ValueError("enabled 必须为布尔值")
+        enabled = payload["enabled"]
+        threshold = payload.get("threshold")
+        if enabled and (type(threshold) is not int or not 1 <= threshold <= 100000):
+            raise ValueError("可用账号阈值必须为 1–100000 之间的整数")
+        async with target_config_lock:
+            targets = load_targets()
+            for index, target in enumerate(targets):
+                if target.id != target_id:
+                    continue
+                if enabled and not target.enabled:
+                    raise ValueError("目标服务器已停用")
+                updated = replace(target, refill_enabled=enabled)
+                if enabled:
+                    updated = replace(updated, refill_mode="target", refill_threshold=threshold,
+                                      refill_target=threshold, refill_count=0)
+                targets[index] = updated
+                save_targets(targets)
+                monitor_state.refill_status.pop(target_id, None)
+                monitor_state.sync_refill_snapshot()
+                break
+            else:
+                raise HTTPException(status_code=404, detail="target not found")
+        if enabled:
+            monitor_state._last_refill_at.pop(target_id, None)
+            monitor_state.schedule_refill(target_id)
+        return {"status": "ok", "target": target_to_public_dict(updated)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

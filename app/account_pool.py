@@ -242,6 +242,18 @@ class AccountPool:
         with self.db() as conn:
             total = sum(count for _, count in allocations)
             available = conn.execute("SELECT COUNT(*) FROM accounts WHERE state='available'").fetchone()[0]
+            shortage = False
+            if source == "auto":
+                if len(allocations) != 1:
+                    raise ValueError("自动补号每次只处理一台服务器")
+                target, requested = allocations[0]
+                if conn.execute("SELECT 1 FROM jobs WHERE target_id=? AND status IN ('queued','running','attention')", (target.id,)).fetchone():
+                    raise ValueError("该服务器已有未完成的导入任务")
+                if available == 0:
+                    return {"status": "empty", "total": 0, "message": "号池不足，等待导入账号"}
+                total = min(requested, available)
+                shortage = total < requested
+                allocations = [(target, total)]
             if total > available:
                 raise ValueError(f"号池不足：需要 {total}，可分配 {available}")
             for target, count in allocations:
@@ -259,7 +271,7 @@ class AccountPool:
                 conn.executemany("INSERT INTO job_items (id,job_id,account_id,name) VALUES (?,?,?,?)",
                                  [(uuid.uuid4().hex, job_id, row["id"], row["name"]) for row in rows])
                 job_ids.append(job_id)
-        return {"status": "queued", "group_id": group_id, "job_ids": job_ids, "total": total}
+        return {"status": "queued", "group_id": group_id, "job_ids": job_ids, "total": total, "shortage": shortage}
 
     def claim(self, parallelism=3):
         now = time.time()

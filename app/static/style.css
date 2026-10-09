@@ -1,4 +1,5 @@
 .pool-card { padding: 1.5rem; margin-bottom: 1.5rem; }
+.pool-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; flex-shrink: 0; }
 .pool-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; margin: 1rem 0; }
 .pool-stat { padding: 1rem; background: var(--input-bg); border: 1px solid var(--border); border-radius: .7rem; }
 .pool-stat span, .pool-stat strong { display: block; }

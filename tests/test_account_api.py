@@ -1,4 +1,6 @@
 import tempfile
+import gzip
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -49,6 +51,27 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/import-jobs", json={"allocations": []}).status_code, 400)
         self.assertEqual(self.client.post("/api/cookies/import", content="not JSON").status_code, 400)
         self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_gzip_upload_and_duplicate_retry(self):
+        body = gzip.compress(json.dumps({"documents": [
+            {"name": "account.json", "text": '{"email":"gzip@example.test","cookie":"session=compressed"}'}
+        ]}).encode())
+        headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}
+        response = self.client.post("/api/cookies/import", content=body, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["imported_count"], 1)
+        response = self.client.post("/api/cookies/import", content=body, headers=headers)
+        self.assertEqual(response.json()["duplicate_count"], 1)
+        self.assertEqual(self.client.get("/api/cookies").json()["available"], 1)
+
+    def test_invalid_and_oversized_compressed_upload(self):
+        headers = {"Content-Encoding": "gzip"}
+        self.assertEqual(self.client.post("/api/cookies/import", content=b"not-gzip", headers=headers).status_code, 400)
+        truncated = gzip.compress(b'{}')[:-4]
+        self.assertEqual(self.client.post("/api/cookies/import", content=truncated, headers=headers).status_code, 400)
+        with self.assertRaises(main.HTTPException) as raised:
+            main.decompress_upload(gzip.compress(b"x" * 1000), 100)
+        self.assertEqual(raised.exception.status_code, 413)
 
 
 if __name__ == "__main__":

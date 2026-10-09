@@ -308,6 +308,22 @@ class AccountPool:
                 raise ValueError("不支持的操作")
             self._rollup(conn, job_id)
 
+    def clear(self):
+        """Cancel pending deliveries and remove inventory in one transaction.
+
+        Invalidate leases so late workers cannot finalize deleted accounts.
+        Remote requests already sent may still commit; delivered history is kept.
+        """
+        with self.db() as conn:
+            removed = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+            cancelled = conn.execute("""UPDATE jobs SET status='cancelled',lease='',
+                lease_until=0,retry_at=0,updated_at=?
+                WHERE status IN ('queued','running','attention')""", (time.time(),)).rowcount
+            conn.execute("""UPDATE job_items SET state='cancelled',error='中央号池已清空'
+                WHERE state IN ('queued','inflight','unknown','failed')""")
+            conn.execute("DELETE FROM accounts")
+        return {"status": "ok", "deleted_count": removed, "cancelled_jobs": cancelled}
+
     def has_open_job(self, target_id):
         with self.db() as conn:
             return bool(conn.execute("SELECT 1 FROM jobs WHERE target_id=? AND status IN ('queued','running','attention')", (target_id,)).fetchone())

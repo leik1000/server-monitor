@@ -8,6 +8,7 @@ import uuid
 import hashlib
 import secrets
 import sqlite3
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.requests import ClientDisconnect
 from app.account_pool import AccountPool, parse_document
 from app.account_dispatch import Dispatcher
 
@@ -767,6 +769,11 @@ async def cookie_pool_summary() -> dict[str, Any]:
     return await asyncio.to_thread(cookie_pool.summary)
 
 
+@app.post("/api/cookies/clear", dependencies=[Depends(verify_api_auth)])
+async def clear_cookie_pool() -> dict[str, Any]:
+    return await asyncio.to_thread(cookie_pool.clear)
+
+
 @app.post("/api/cookies/import", dependencies=[Depends(verify_api_auth)])
 async def import_cookies(request: Request) -> dict[str, Any]:
     try:
@@ -803,16 +810,45 @@ async def import_cookies(request: Request) -> dict[str, Any]:
 
 
 async def limited_json(request: Request):
-    chunks, size = [], 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > 16 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="单批上传不能超过 16MB，请分批上传")
-        chunks.append(chunk)
+    limit = 16 * 1024 * 1024
+    encoding = request.headers.get("content-encoding", "identity").strip().lower()
+    if encoding not in {"identity", "gzip"}:
+        raise HTTPException(status_code=415, detail="不支持的上传压缩格式")
+
+    async def read_body():
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise HTTPException(status_code=413, detail="单批上传不能超过 16MB，请分批上传")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     try:
-        return json.loads(b"".join(chunks))
+        body = await asyncio.wait_for(read_body(), timeout=90)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail="上传接收超时，请检查网络或减少单批文件数量") from None
+    except ClientDisconnect:
+        raise HTTPException(status_code=400, detail="上传连接已断开，请重试；已入池账号会自动去重") from None
+    if encoding == "gzip":
+        body = await asyncio.to_thread(decompress_upload, body, limit)
+    try:
+        return json.loads(body)
     except (ValueError, UnicodeDecodeError):
         raise ValueError("请求 JSON 格式错误") from None
+
+
+def decompress_upload(body: bytes, limit: int) -> bytes:
+    try:
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = decoder.decompress(body, limit + 1)
+        if len(decoded) > limit or decoder.unconsumed_tail:
+            raise HTTPException(status_code=413, detail="解压后的上传内容超过 16MB，请分批上传")
+        if not decoder.eof or decoder.unused_data:
+            raise ValueError("压缩数据不完整")
+        return decoded
+    except (ValueError, zlib.error):
+        raise HTTPException(status_code=400, detail="上传压缩数据损坏或不完整，请重新上传") from None
 
 
 @app.get("/api/import-jobs", dependencies=[Depends(verify_api_auth)])

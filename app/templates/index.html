@@ -94,7 +94,10 @@
     <section class="card pool-card" id="accountPoolCard">
       <div class="section-head">
         <div><h2>中央账号池</h2><p>上传账号 JSON，按服务器分配；确认入库后自动移出号池。</p></div>
-        <button id="openAccountImportBtn" type="button">导入账号</button>
+        <div class="pool-header-actions">
+          <button id="clearAccountPoolBtn" class="danger" type="button">清空号池</button>
+          <button id="openAccountImportBtn" type="button">导入账号</button>
+        </div>
       </div>
       <div id="cookiePoolSummary" class="pool-stats" aria-live="polite">正在读取库存...</div>
       <p id="cookieFormMessage" class="form-message" role="status"></p>

@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import ClientDisconnect
-from app.account_pool import AccountPool, parse_document
+from app.account_pool import AccountPool, prepare_documents
 from app.account_dispatch import Dispatcher
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -779,27 +779,8 @@ async def import_cookies(request: Request) -> dict[str, Any]:
     try:
         payload = await limited_json(request)
         if isinstance(payload, dict) and "documents" in payload:
-            documents = payload["documents"]
-            if not isinstance(documents, list) or len(documents) > 100:
-                raise ValueError("每批最多上传 100 个文件")
-            results = {"imported_count": 0, "duplicate_count": 0, "invalid_count": 0, "errors": []}
-            for document in documents:
-                if not isinstance(document, dict) or not isinstance(document.get("text"), str):
-                    raise ValueError("文件内容格式不正确")
-                source = str(document.get("name") or "粘贴内容")[:200]
-                try:
-                    items = await asyncio.to_thread(parse_document, document["text"])
-                    if len(items) > 10000:
-                        raise ValueError("单文件最多 10000 个账号，请拆分文件")
-                    result = await asyncio.to_thread(cookie_pool.import_items, items)
-                except ValueError as exc:
-                    result = {"imported_count": 0, "duplicate_count": 0, "invalid_count": 1,
-                              "errors": [{"index": 0, "error": str(exc)}]}
-                for key in ("imported_count", "duplicate_count", "invalid_count"):
-                    results[key] += result[key]
-                results["errors"].extend(dict(e, source=source) for e in result["errors"])
-            results["errors"] = results["errors"][:100]
-            return results
+            prepared = await asyncio.to_thread(prepare_documents, payload["documents"])
+            return await asyncio.to_thread(cookie_pool.import_prepared, prepared)
         items = payload.get("items") if isinstance(payload, dict) and "items" in payload else payload
         items = items if isinstance(items, list) else [items]
         if len(items) > 10000:

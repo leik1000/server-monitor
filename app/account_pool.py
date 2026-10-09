@@ -7,6 +7,7 @@ import re
 import sqlite3
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from pathlib import Path
 
@@ -66,6 +67,46 @@ def parse_document(text):
             return value["items"]
         return value if isinstance(value, list) else [value]
     return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def prepare_items(items, source=None):
+    """Normalize credentials outside the write transaction."""
+    accounts, errors, invalid = [], [], 0
+    for index, item in enumerate(items, 1):
+        try:
+            accounts.append(normalize_account(item))
+        except ValueError as exc:
+            invalid += 1
+            if len(errors) < 100:
+                error = {"index": index, "error": str(exc)}
+                if source is not None:
+                    error["source"] = source
+                errors.append(error)
+    return {"accounts": accounts, "invalid_count": invalid, "errors": errors}
+
+
+def prepare_document(document):
+    source = str(document.get("name") or "粘贴内容")[:200]
+    try:
+        items = parse_document(document["text"])
+        if len(items) > 10000:
+            raise ValueError("单文件最多 10000 个账号，请拆分文件")
+        return prepare_items(items, source)
+    except ValueError as exc:
+        return {"accounts": [], "invalid_count": 1,
+                "errors": [{"index": 0, "error": str(exc), "source": source}]}
+
+
+def prepare_documents(documents):
+    # Validate the envelope before starting any work; preserve file order in results.
+    if not isinstance(documents, list) or len(documents) > 100:
+        raise ValueError("每批最多上传 100 个文件")
+    if any(not isinstance(doc, dict) or not isinstance(doc.get("text"), str) for doc in documents):
+        raise ValueError("文件内容格式不正确")
+    if not documents:
+        return []
+    with ThreadPoolExecutor(max_workers=min(4, len(documents)), thread_name_prefix="pool-import") as executor:
+        return list(executor.map(prepare_document, documents))
 
 
 class AccountPool:
@@ -145,19 +186,32 @@ class AccountPool:
         # Keep the original as a migration backup, never silently re-import it.
 
     def import_items(self, items):
-        added, duplicate, errors = 0, 0, []
+        return self.import_prepared([prepare_items(items)])
+
+    def import_prepared(self, prepared):
+        accounts, errors, invalid = [], [], 0
+        for result in prepared:
+            accounts.extend(result["accounts"])
+            invalid += result["invalid_count"]
+            errors.extend(result["errors"][:max(0, 100 - len(errors))])
+        if not accounts:
+            return {"imported_count": 0, "duplicate_count": 0,
+                    "invalid_count": invalid, "errors": errors}
+        now = time.time()
+        rows = [(uuid.uuid4().hex, a["fingerprint"], a["identity"], a["name"], a["cookie"],
+                 now, a["fingerprint"], a["identity"]) for a in accounts]
+        # SQLite has one writer. One executemany/commit avoids per-file fsync and
+        # lock contention, while unique indexes handle in-batch/concurrent duplicates.
         with self.db() as conn:
-            for index, item in enumerate(items, 1):
-                try:
-                    account = normalize_account(item)
-                    if self._insert(conn, account):
-                        added += 1
-                    else:
-                        duplicate += 1
-                except ValueError as exc:
-                    errors.append({"index": index, "error": str(exc)})
-        return {"imported_count": added, "duplicate_count": duplicate,
-                "invalid_count": len(errors), "errors": errors[:100]}
+            before = conn.total_changes
+            conn.executemany("""INSERT INTO accounts
+                (id,fingerprint,identity,name,cookie,state,created_at)
+                SELECT ?,?,?,?,?,'available',?
+                WHERE NOT EXISTS (SELECT 1 FROM delivered WHERE fingerprint=? OR identity=?)
+                ON CONFLICT DO NOTHING""", rows)
+            added = conn.total_changes - before
+        return {"imported_count": added, "duplicate_count": len(accounts) - added,
+                "invalid_count": invalid, "errors": errors}
 
     def summary(self):
         with self.db() as conn:

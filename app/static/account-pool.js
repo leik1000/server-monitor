@@ -84,7 +84,7 @@
       xhr.upload.onprogress = (event) => {
         const percent = event.lengthComputable ? Math.round(event.loaded / event.total * 100) : 0;
         progressText(percent >= 100
-          ? "上传已完成，服务器正在校验并保存账号..."
+          ? "上传进度 100%，正在等待服务器确认结果..."
           : `正在上传 ${documents.length} 个文件 · ${kb} KB${compressed ? "（已压缩）" : ""} · ${percent}%`);
       };
       xhr.onload = () => {

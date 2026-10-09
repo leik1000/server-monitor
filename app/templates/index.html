@@ -98,10 +98,6 @@
       </div>
       <div id="cookiePoolSummary" class="pool-stats" aria-live="polite">正在读取库存...</div>
       <p id="cookieFormMessage" class="form-message" role="status"></p>
-      <details id="poolJobsPanel" open>
-        <summary>导入任务 <span id="dispatchConcurrency"></span></summary>
-        <div id="importJobs" class="pool-jobs">暂无任务</div>
-      </details>
     </section>
 
     <dialog id="accountImportDialog" class="pool-dialog account-import-dialog" aria-labelledby="accountImportTitle">
@@ -140,12 +136,6 @@
         <p id="dispatchMessage" class="form-message" role="status"></p>
         <button id="submitDispatchBtn" type="submit">确认补号</button>
       </form>
-    </dialog>
-    <dialog id="jobDetailDialog" class="pool-dialog">
-      <div class="section-head"><h2>任务账号明细</h2><button id="closeJobDetailBtn" type="button" class="secondary">关闭</button></div>
-      <p class="pool-help">失败和待确认账号优先显示，每页 100 条。待确认账号始终绑定原服务器。</p>
-      <div id="jobDetailItems"></div>
-      <div class="pool-upload-actions"><button id="jobPrevBtn" type="button" class="secondary">上一页</button><button id="jobNextBtn" type="button" class="secondary">下一页</button></div>
     </dialog>
 
     <!-- 配置管理器（可折叠） -->

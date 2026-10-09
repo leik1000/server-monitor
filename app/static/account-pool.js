@@ -1,11 +1,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const labels = { queued: "排队中", running: "执行中", attention: "需要处理", completed: "已完成", cancelled: "已取消", success: "已入库", unknown: "待确认", failed: "失败", inflight: "发送中" };
   let available = 0;
   let loading = false;
   let uploading = false;
-  let detailJob = "";
-  let detailOffset = 0;
   let timer;
   let refillTarget = null;
 
@@ -23,7 +20,7 @@
     loading = true;
     let delay = 15000;
     try {
-      const [summary, result] = await Promise.all([api("/api/cookies"), api("/api/import-jobs")]);
+      const summary = await api("/api/cookies");
       available = summary.available;
       $("centralAccountCount").textContent = fmtNumber(summary.total);
       $("cookiePoolSummary").innerHTML = [
@@ -31,9 +28,7 @@
         ["待确认", summary.unknown, ""], ["失败待处理", summary.failed, ""], ["累计已分配", summary.assigned, ""],
         ...(summary.legacy_review ? [["旧号池待核对", summary.legacy_review, ""]] : []),
       ].map(([label, value, cls]) => `<div class="pool-stat ${cls}"><span>${label}</span><strong>${fmtNumber(value)}</strong></div>`).join("");
-      $("dispatchConcurrency").textContent = `· 最多 ${result.parallelism} 台服务器并行`;
-      renderJobs(result.jobs || []);
-      if ((result.jobs || []).some((j) => ["queued", "running"].includes(j.status))) delay = 2000;
+      if (summary.assigning > 0 || summary.unknown > 0) delay = 2000;
       if ($("dispatchDialog").open) updateTotal();
     } catch (error) {
       $("cookiePoolSummary").textContent = `库存读取失败：${error.message}`;
@@ -43,27 +38,6 @@
       clearTimeout(timer);
       timer = setTimeout(refresh, delay);
     }
-  }
-
-  function renderJobs(jobs) {
-    const container = $("importJobs");
-    // Avoid replacing focused controls while keyboard users interact with them.
-    if (container.contains(document.activeElement)) return;
-    container.innerHTML = jobs.length ? jobs.map((job) => {
-      const c = job.counts;
-      const done = (c.success || 0) + (c.failed || 0) + (c.cancelled || 0);
-      const percent = job.total ? Math.round(done / job.total * 100) : 0;
-      return `<article class="pool-job">
-        <div class="pool-job-heading"><strong>${escapeHtml(job.target_name)}</strong><span>${labels[job.status] || escapeHtml(job.status)}</span></div>
-        <p class="pool-help">${fmtTime(job.created_at)} · ${job.source === "auto" ? "自动补号" : "手动导入"} · ${escapeHtml(job.id.slice(0, 8))}</p>
-        <progress max="100" value="${percent}" aria-label="任务进度 ${percent}%"></progress>
-        <p>计划 ${job.total} · 新增 ${(c.success || 0) - job.already_exists} · 已存在 ${job.already_exists} · 失败 ${c.failed || 0} · 待确认 ${c.unknown || 0} · 未完成 ${(c.queued || 0) + (c.inflight || 0)}${c.cancelled ? ` · 已取消 ${c.cancelled}` : ""}</p>
-        <div class="pool-job-actions">
-          <button class="secondary small" data-job="${job.id}" data-job-action="detail">查看明细</button>
-          ${job.status === "attention" ? `<button class="secondary small" data-job="${job.id}" data-job-action="retry">重试 / 确认原服务器</button>` : ""}
-          ${c.queued ? `<button class="secondary small" data-job="${job.id}" data-job-action="cancel">取消未发送部分</button>` : ""}
-        </div></article>`;
-    }).join("") : '<p class="pool-help">暂无导入任务。先上传账号，再点击服务器卡片上的“补号”。</p>';
   }
 
   function setUploadBusy(busy) {
@@ -195,39 +169,11 @@
       });
       $("dispatchDialog").close();
       $("cookieFormMessage").textContent = `已为 ${target.name} 创建补号任务，共 ${result.total} 个账号，后台处理中。`;
-      $("poolJobsPanel").open = true;
       await refresh();
     } catch (error) { $("dispatchMessage").textContent = error.message; }
     finally { $("submitDispatchBtn").disabled = false; }
   });
 
-  async function showDetails() {
-    const result = await api(`/api/import-jobs/${encodeURIComponent(detailJob)}?offset=${detailOffset}`);
-    $("jobDetailItems").innerHTML = result.items.map((i) => `<div class="pool-detail-item"><strong>${escapeHtml(i.name)}</strong><span>${labels[i.state] || escapeHtml(i.state)} · 尝试 ${i.attempts} 次</span>${i.error ? `<p>${escapeHtml(i.error)}</p>` : ""}</div>`).join("") || '<p class="pool-help">本页没有账号</p>';
-    $("jobPrevBtn").disabled = detailOffset === 0;
-    $("jobNextBtn").disabled = result.items.length < 100;
-    if (!$("jobDetailDialog").open) $("jobDetailDialog").showModal();
-  }
-
-  $("importJobs").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-job]");
-    if (!button) return;
-    button.disabled = true;
-    try {
-      if (button.dataset.jobAction === "detail") {
-        detailJob = button.dataset.job; detailOffset = 0; await showDetails();
-      } else {
-        await api(`/api/import-jobs/${button.dataset.job}/${button.dataset.jobAction}`, {});
-        button.blur();
-        await refresh();
-      }
-    } catch (error) { $("cookieFormMessage").textContent = error.message; }
-    finally { button.disabled = false; }
-  });
-
-  $("jobPrevBtn").addEventListener("click", () => { detailOffset = Math.max(0, detailOffset - 100); showDetails().catch((e) => { $("jobDetailItems").textContent = e.message; }); });
-  $("jobNextBtn").addEventListener("click", () => { detailOffset += 100; showDetails().catch((e) => { $("jobDetailItems").textContent = e.message; }); });
-  $("closeJobDetailBtn").addEventListener("click", () => $("jobDetailDialog").close());
   $("closeDispatchBtn").addEventListener("click", () => $("dispatchDialog").close());
   $("dispatchCount").addEventListener("input", updateTotal);
   $("accountFiles").addEventListener("change", importFiles);

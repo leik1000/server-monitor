@@ -569,7 +569,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  cursor: pointer;
+  cursor: default;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
@@ -578,79 +578,23 @@ main {
   box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--card-border-hover);
 }
 
-.target-stats.collapsed-stats {
+.target-stats.overview-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
   width: 100%;
 }
 
-.collapsed-stats .stat-box {
+.overview-stats .stat-box {
   padding: 0.5rem;
 }
 
-.collapsed-stats .stat-box span {
+.overview-stats .stat-box span {
   font-size: 0.68rem;
 }
 
-.collapsed-stats .stat-box strong {
+.overview-stats .stat-box strong {
   font-size: 0.95rem;
-}
-
-/* Target Card Details Collapsible */
-.target-card-details {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
-  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, margin 0.4s ease;
-  margin-top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.target-card.expanded .target-card-details {
-  max-height: 2000px;
-  opacity: 1;
-  pointer-events: auto;
-  margin-top: 0.5rem;
-  border-top: 1px dashed rgba(255, 255, 255, 0.05);
-  padding-top: 1rem;
-}
-
-/* Expand Indicator */
-.card-expand-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  padding-top: 0.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
-  margin-top: auto;
-  transition: all 0.2s ease;
-}
-
-.card-expand-indicator:hover {
-  color: var(--text);
-}
-
-.card-expand-indicator .indicator-text::after {
-  content: "点击展开详情";
-}
-
-.target-card.expanded .card-expand-indicator .indicator-text::after {
-  content: "点击折叠卡片";
-}
-
-.card-expand-indicator .indicator-arrow {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.target-card.expanded .card-expand-indicator .indicator-arrow {
-  transform: rotate(180deg);
 }
 
 .target-head {
@@ -889,72 +833,6 @@ main {
   margin-top: -0.1rem;
 }
 
-/* Collapsible Logs Panel */
-.recent-logs-wrapper {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.recent-logs-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.65rem 0.85rem;
-  cursor: pointer;
-  user-select: none;
-  background: rgba(255, 255, 255, 0.02);
-  transition: background 0.2s ease;
-}
-
-.recent-logs-header:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.logs-header-title {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.recent-logs-header svg {
-  color: var(--text-muted);
-}
-
-.toggle-arrow {
-  display: flex;
-  align-items: center;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: var(--text-muted);
-}
-
-.recent-logs-body {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
-  border-top: 0 solid transparent;
-}
-
-.recent-logs-body.expanded {
-  max-height: 300px;
-  opacity: 1;
-  border-top: 1px solid var(--border);
-  overflow-y: auto;
-}
-
-.recent-logs-body.expanded .toggle-arrow {
-  transform: rotate(180deg);
-}
-
-.recent {
-  padding: 0.25rem;
-}
-
 table {
   width: 100%;
   border-collapse: collapse;
@@ -983,30 +861,6 @@ td {
 
 tr:last-child td {
   border-bottom: none;
-}
-
-.log-status-pill {
-  display: inline-block;
-  padding: 0.12rem 0.4rem;
-  border-radius: 4px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.log-status-pill.success {
-  background: rgba(16, 185, 129, 0.12);
-  color: var(--ok);
-}
-
-.log-status-pill.error {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--bad);
-}
-
-.log-status-pill.progress {
-  background: rgba(59, 130, 246, 0.12);
-  color: var(--primary);
 }
 
 .error-text {

@@ -222,7 +222,6 @@ class TargetClient:
             "health": {},
             "stats": {},
             "token_summary": {},
-            "recent_logs": [],
         }
         if not self.target.enabled:
             payload["error"] = "disabled"
@@ -231,12 +230,10 @@ class TargetClient:
             health_task = self.get_json("/api/v1/health", auth=False)
             stats_task = self.get_json("/api/v1/logs/stats?range=today")
             tokens_task = self.get_json("/api/v1/tokens?page=1&page_size=1")
-            logs_task = self.get_json("/api/v1/logs?limit=8&page=1&task_filter=all")
-            health, stats, tokens, logs = await asyncio.gather(
+            health, stats, tokens = await asyncio.gather(
                 health_task,
                 stats_task,
                 tokens_task,
-                logs_task,
             )
             payload.update(
                 {
@@ -245,7 +242,6 @@ class TargetClient:
                     "health": health,
                     "stats": normalize_stats(stats),
                     "token_summary": normalize_token_summary(tokens),
-                    "recent_logs": normalize_recent_logs(logs),
                     "updated_at": int(time.time()),
                 }
             )
@@ -288,29 +284,6 @@ def normalize_token_summary(tokens_payload: dict[str, Any]) -> dict[str, Any]:
         "regular_active": int(summary.get("regular_active") or summary.get("regular_active_count") or 0),
         "credits_available_total": float(summary.get("credits_available_total") or 0),
     }
-
-
-def normalize_recent_logs(logs_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    logs = logs_payload.get("logs")
-    if not isinstance(logs, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for item in logs[:8]:
-        if not isinstance(item, dict):
-            continue
-        items.append(
-            {
-                "ts": item.get("ts"),
-                "operation": item.get("operation") or item.get("path") or "-",
-                "status_code": item.get("status_code"),
-                "task_status": item.get("task_status") or "",
-                "task_progress": item.get("task_progress"),
-                "duration_sec": item.get("duration_sec"),
-                "error": item.get("error") or "",
-                "model": item.get("model") or "",
-            }
-        )
-    return items
 
 
 def parse_bool(value: Any, default: bool = True) -> bool:

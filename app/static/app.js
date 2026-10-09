@@ -53,8 +53,6 @@ const els = {
 let refreshTimer = null;
 let latestTargets = [];
 let currentGroup = "全部";
-const expandedLogsTargets = new Set();
-const expandedTargets = new Set();
 
 function fmtNumber(value) {
   const n = Number(value || 0);
@@ -72,12 +70,6 @@ function fmtTime(ts) {
   const n = Number(ts || 0);
   if (!n) return "-";
   return new Date(n * 1000).toLocaleString();
-}
-
-function fmtDuration(value) {
-  const n = Number(value || 0);
-  if (!n) return "-";
-  return `${n}s`;
 }
 
 function buildMinuteBuckets(items = []) {
@@ -144,76 +136,6 @@ function renderTimeline(container, items = [], target = {}) {
     bucket.style.height = `${Math.max(8, Math.round((count / maxCount) * 42))}px`;
     bucket.title = buildBucketTitle(item, target);
     container.appendChild(bucket);
-  }
-}
-
-function setHealthPill(card, key, text, state) {
-  const pill = card.querySelector(`[data-health="${key}"]`);
-  if (!pill) return;
-  pill.textContent = text;
-  pill.className = `health-pill ${state}`;
-}
-
-function renderHealthStrip(card, target, stats, token) {
-  const running = Number(stats.in_progress_requests || 0);
-  const failed = Number(stats.failed_requests || 0);
-  const total = Number(stats.total_requests || 0);
-  const active = Number(token.active || 0);
-  const accountTotal = Number(token.total || 0);
-  const failRate = total > 0 ? failed / total : 0;
-  setHealthPill(
-    card,
-    "availability",
-    target.online ? `在线 ${target.latency_ms || 0}ms` : "离线",
-    target.online ? "good" : "bad",
-  );
-  setHealthPill(
-    card,
-    "load",
-    `当前任务 ${fmtNumber(running)}`,
-    running <= 0 ? "idle" : running <= 5 ? "good" : running <= 15 ? "warn" : "bad",
-  );
-  setHealthPill(
-    card,
-    "errors",
-    `失败 ${fmtNumber(failed)}`,
-    failRate <= 0 ? "good" : failRate <= 0.1 ? "warn" : "bad",
-  );
-  setHealthPill(
-    card,
-    "accounts",
-    `账号 ${fmtNumber(active)}/${fmtNumber(accountTotal)}`,
-    accountTotal <= 0 ? "bad" : active <= 0 ? "bad" : active < accountTotal * 0.2 ? "warn" : "good",
-  );
-}
-
-function renderLogs(tbody, logs = []) {
-  tbody.innerHTML = "";
-  if (!logs.length) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="5" class="empty" style="padding:1.5rem; text-align:center;">暂无请求记录</td>';
-    tbody.appendChild(tr);
-    return;
-  }
-  for (const log of logs) {
-    const status = String(log.task_status || log.status_code || "-");
-    let statusClass = "";
-    if (status.toLowerCase() === "success" || status === "200" || status.toLowerCase() === "completed") {
-      statusClass = "success";
-    } else if (status.toLowerCase() === "failed" || status.toLowerCase() === "error" || Number(status) >= 400) {
-      statusClass = "error";
-    } else if (status.toLowerCase() === "processing" || status.toLowerCase() === "running") {
-      statusClass = "progress";
-    }
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${fmtTime(log.ts)}</td>
-      <td>${escapeHtml(log.operation || log.model || "-")}</td>
-      <td><span class="log-status-pill ${statusClass}">${escapeHtml(status)}</span></td>
-      <td>${fmtDuration(log.duration_sec)}</td>
-      <td style="color:var(--bad); font-size:0.72rem; word-break:break-all;">${escapeHtml(log.error || "")}</td>
-    `;
-    tbody.appendChild(tr);
   }
 }
 
@@ -302,9 +224,6 @@ function renderTargets(targets = []) {
     const error = node.querySelector(".error-text");
     const stats = target.stats || {};
     const token = target.token_summary || {};
-    const failed = Number(stats.failed_requests || 0);
-    const total = Number(stats.total_requests || 0);
-    const failRate = total > 0 ? failed / total : 0;
     
     name.textContent = target.name || "-";
     meta.innerHTML = [
@@ -329,20 +248,7 @@ function renderTargets(targets = []) {
       item.textContent = key === "credits_available_total" ? fmtCredits(token[key]) : fmtNumber(token[key]);
     }
     
-    renderHealthStrip(card, target, stats, token);
     renderTimeline(card.querySelector(".timeline"), stats.recent_completed_timeline || [], target);
-    renderLogs(card.querySelector("tbody"), target.recent_logs || []);
-    
-    // 折叠日志处理
-    const logsBody = card.querySelector(".recent-logs-body");
-    if (expandedLogsTargets.has(target.id)) {
-      logsBody.classList.add("expanded");
-    }
-    
-    // 折叠卡片状态还原
-    if (expandedTargets.has(target.id)) {
-      card.classList.add("expanded");
-    }
     
     // 编辑和删除按钮的 ID 绑定
     const editBtn = card.querySelector(".btn-edit");
@@ -607,46 +513,6 @@ async function saveSystemConfig(event) {
     els.saveSystemBtn.disabled = false;
   }
 }
-
-// Collapsible Logs Delegation Binding
-els.targets.addEventListener("click", (event) => {
-  const header = event.target.closest('[data-action="toggle-logs"]');
-  if (!header) return;
-  const body = header.nextElementSibling;
-  const card = header.closest(".target-card");
-  
-  // 查找 targetId (通过 edit/delete 按钮)
-  const editBtn = card.querySelector('.btn-edit');
-  const targetId = editBtn ? editBtn.dataset.id : null;
-  
-  if (body.classList.contains("expanded")) {
-    body.classList.remove("expanded");
-    if (targetId) expandedLogsTargets.delete(targetId);
-  } else {
-    body.classList.add("expanded");
-    if (targetId) expandedLogsTargets.add(targetId);
-  }
-});
-
-// Collapsible Card Delegation Binding
-els.targets.addEventListener("click", (event) => {
-  if (event.target.closest("button") || event.target.closest("a") || event.target.closest("input") || event.target.closest(".recent-logs-wrapper") || event.target.closest(".target-actions")) {
-    return;
-  }
-  const card = event.target.closest(".target-card");
-  if (!card) return;
-  
-  const editBtn = card.querySelector(".btn-edit");
-  const targetId = editBtn ? editBtn.dataset.id : null;
-  
-  if (card.classList.contains("expanded")) {
-    card.classList.remove("expanded");
-    if (targetId) expandedTargets.delete(targetId);
-  } else {
-    card.classList.add("expanded");
-    if (targetId) expandedTargets.add(targetId);
-  }
-});
 
 els.refreshBtn.addEventListener("click", () => loadStatus(true));
 els.targetForm.addEventListener("submit", saveTarget);

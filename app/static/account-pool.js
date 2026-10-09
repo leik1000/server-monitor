@@ -7,6 +7,7 @@
   let detailJob = "";
   let detailOffset = 0;
   let timer;
+  let refillTarget = null;
 
   async function api(path, payload) {
     const response = await fetch(path, payload === undefined ? {} : {
@@ -60,7 +61,7 @@
           ${job.status === "attention" ? `<button class="secondary small" data-job="${job.id}" data-job-action="retry">重试 / 确认原服务器</button>` : ""}
           ${c.queued ? `<button class="secondary small" data-job="${job.id}" data-job-action="cancel">取消未发送部分</button>` : ""}
         </div></article>`;
-    }).join("") : '<p class="pool-help">暂无导入任务。先上传账号，再选择服务器分配。</p>';
+    }).join("") : '<p class="pool-help">暂无导入任务。先上传账号，再点击服务器卡片上的“补号”。</p>';
   }
 
   function setUploadBusy(busy) {
@@ -136,30 +137,51 @@
   }
 
   function updateTotal() {
-    const total = Array.from($("dispatchTargets").querySelectorAll("input")).reduce((n, input) => n + Number(input.value || 0), 0);
+    const total = Number($("dispatchCount").value || 0);
     $("dispatchAvailable").textContent = `号池可分配：${fmtNumber(available)}`;
-    $("dispatchTotal").textContent = `合计分配 ${fmtNumber(total)} 个${total > available ? "，库存不足" : ""}`;
+    $("dispatchTotal").textContent = `本次补号 ${fmtNumber(total)} 个${total > available ? "，库存不足" : ""}`;
   }
 
-  async function openDispatch(targetId = "") {
+  async function openRefill(targetId) {
+    if ($("dispatchDialog").open) return;
+    refillTarget = null;
     $("dispatchMessage").textContent = "";
+    $("dispatchTargetName").textContent = "正在读取服务器信息...";
+    $("dispatchCount").value = "";
+    $("dispatchAvailable").textContent = "正在读取库存...";
+    $("dispatchTotal").textContent = "";
+    $("submitDispatchBtn").disabled = true;
+    $("dispatchDialog").showModal();
     try {
       const [result, summary] = await Promise.all([api("/api/targets"), api("/api/cookies")]);
+      const target = result.targets.find((t) => t.id === targetId);
+      if (!target || !target.enabled) throw new Error("该服务器不存在或已停用");
+      refillTarget = target;
       available = summary.available;
-      $("dispatchTargets").innerHTML = result.targets.filter((t) => t.enabled).map((t) => `<label class="dispatch-target"><span><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(t.base_url)}</small></span><input aria-label="${escapeHtml(t.name)} 导入数量" data-target="${escapeHtml(t.id)}" type="number" min="0" max="100000" step="1" value="${t.id === targetId ? Math.min(available, t.refill_count || t.refill_batch_size || 50) : 0}" required /></label>`).join("") || '<p class="pool-help">请先添加并启用服务器。</p>';
+      $("dispatchTargetName").textContent = `目标服务器：${target.name}（${target.base_url}）`;
       updateTotal();
-      $("dispatchDialog").showModal();
-    } catch (error) { $("cookieFormMessage").textContent = `读取服务器失败：${error.message}`; }
+      $("submitDispatchBtn").disabled = false;
+      $("dispatchCount").focus();
+    } catch (error) { $("dispatchMessage").textContent = error.message; }
   }
 
   $("dispatchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const allocations = Array.from($("dispatchTargets").querySelectorAll("input")).map((input) => ({ target_id: input.dataset.target, count: Number(input.value) })).filter((a) => a.count > 0);
+    if (!refillTarget || $("submitDispatchBtn").disabled) return;
+    const target = refillTarget;
+    const count = Number($("dispatchCount").value);
+    if (!Number.isInteger(count) || count < 1 || count > 100000) {
+      $("dispatchMessage").textContent = "请输入 1–100000 之间的整数";
+      return;
+    }
     $("submitDispatchBtn").disabled = true;
     try {
-      const result = await api("/api/import-jobs", { allocations, batch_size: Number($("dispatchBatchSize").value) });
+      const result = await api("/api/import-jobs", {
+        allocations: [{ target_id: target.id, count }],
+        batch_size: target.refill_batch_size || 50,
+      });
       $("dispatchDialog").close();
-      $("cookieFormMessage").textContent = `已创建 ${result.job_ids.length} 个服务器任务，共 ${result.total} 个账号，后台处理中。`;
+      $("cookieFormMessage").textContent = `已为 ${target.name} 创建补号任务，共 ${result.total} 个账号，后台处理中。`;
       $("poolJobsPanel").open = true;
       await refresh();
     } catch (error) { $("dispatchMessage").textContent = error.message; }
@@ -194,10 +216,9 @@
   $("jobNextBtn").addEventListener("click", () => { detailOffset += 100; showDetails().catch((e) => { $("jobDetailItems").textContent = e.message; }); });
   $("closeJobDetailBtn").addEventListener("click", () => $("jobDetailDialog").close());
   $("closeDispatchBtn").addEventListener("click", () => $("dispatchDialog").close());
-  $("openDispatchBtn").addEventListener("click", () => openDispatch());
-  $("dispatchTargets").addEventListener("input", updateTotal);
+  $("dispatchCount").addEventListener("input", updateTotal);
   $("accountFiles").addEventListener("change", importFiles);
   $("accountFolder").addEventListener("change", importFiles);
-  window.accountPoolUI = { refresh, importText, openDispatch };
+  window.accountPoolUI = { refresh, importText, openRefill };
   refresh();
 })();

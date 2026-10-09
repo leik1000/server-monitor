@@ -94,7 +94,6 @@
     <section class="card pool-card" id="accountPoolCard">
       <div class="section-head">
         <div><h2>中央账号池</h2><p>上传账号 JSON，按服务器分配；确认入库后自动移出号池。</p></div>
-        <button id="openDispatchBtn" type="button">分配到服务器</button>
       </div>
       <div id="cookiePoolSummary" class="pool-stats" aria-live="polite">正在读取库存...</div>
       <details class="pool-upload">
@@ -118,13 +117,13 @@
 
     <dialog id="dispatchDialog" class="pool-dialog">
       <form id="dispatchForm">
-        <div class="section-head"><div><h2>分配到服务器</h2><p id="dispatchAvailable"></p></div><button id="closeDispatchBtn" type="button" class="secondary">关闭</button></div>
-        <p class="pool-help">填写数量即选择该服务器。不同服务器并行执行，每台服务器自动分批；关闭页面不影响任务。</p>
-        <div id="dispatchTargets" class="dispatch-targets"></div>
-        <label class="dispatch-batch">每批账号数 <input id="dispatchBatchSize" type="number" min="1" max="100" value="50" required /></label>
+        <div class="section-head"><div><h2>补号</h2><p id="dispatchAvailable"></p></div><button id="closeDispatchBtn" type="button" class="secondary">关闭</button></div>
+        <p id="dispatchTargetName" class="pool-help"></p>
+        <p class="pool-help">从中央号池取出指定数量的 Cookie，导入当前服务器。后台自动分批执行。</p>
+        <label class="dispatch-batch" for="dispatchCount">补号数量 <input id="dispatchCount" type="number" min="1" max="100000" step="1" placeholder="输入数量" required /></label>
         <p id="dispatchTotal" class="pool-help"></p>
         <p id="dispatchMessage" class="form-message" role="status"></p>
-        <button id="submitDispatchBtn" type="submit">开始导入</button>
+        <button id="submitDispatchBtn" type="submit">确认补号</button>
       </form>
     </dialog>
     <dialog id="jobDetailDialog" class="pool-dialog">
@@ -262,9 +261,12 @@
           <h2 class="target-name"></h2>
           <p class="target-meta"></p>
         </div>
-        <div class="target-status-wrapper">
-          <span class="target-status-dot"></span>
-          <span class="target-status"></span>
+        <div class="target-head-actions">
+          <button class="secondary small btn-refill" type="button" data-action="refill">补号</button>
+          <div class="target-status-wrapper">
+            <span class="target-status-dot"></span>
+            <span class="target-status"></span>
+          </div>
         </div>
       </div>
 
@@ -366,7 +368,6 @@
 
         <div class="target-actions">
           <button class="secondary small btn-edit" type="button" data-action="edit">编辑服务器</button>
-          <button class="secondary small btn-refill" type="button" data-action="refill">立即补号</button>
           <button class="danger small btn-delete" type="button" data-action="delete">删除</button>
         </div>
       </div>

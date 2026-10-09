@@ -18,11 +18,8 @@
 .pool-job progress { width: 100%; height: 6px; margin: .5rem 0; accent-color: var(--ok); }
 .pool-dialog { margin: auto; width: min(720px, 94vw); max-height: 88vh; overflow: auto; padding: 1.5rem; background: #111827; color: var(--text); border: 1px solid var(--border-focus); border-radius: 1rem; }
 .pool-dialog::backdrop { background: rgba(0, 0, 0, .7); }
-.dispatch-target { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
-.dispatch-target span { min-width: 0; overflow-wrap: anywhere; }
-.dispatch-target small { display: block; color: var(--text-muted); }
-.dispatch-target input, .dispatch-batch input { width: 110px; flex-shrink: 0; }
-.dispatch-targets { max-height: 40vh; overflow: auto; }
+.dispatch-batch input { width: 150px; flex-shrink: 0; }
+#dispatchTargetName { overflow-wrap: anywhere; }
 .dispatch-batch { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; }
 .pool-detail-item { border-bottom: 1px solid var(--border); padding: .75rem 0; overflow-wrap: anywhere; }
 .pool-detail-item span { display: block; color: var(--text-muted); font-size: .8rem; }
@@ -651,6 +648,21 @@ main {
 
 .target-title-area {
   flex-grow: 1;
+  min-width: 0;
+}
+
+.target-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.target-head-actions .btn-refill {
+  padding: 0.35rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.78rem;
 }
 
 .target-name {

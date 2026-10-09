@@ -349,7 +349,11 @@ function renderTargets(targets = []) {
     const refillBtn = card.querySelector(".btn-refill");
     if (editBtn) editBtn.dataset.id = target.id || "";
     if (deleteBtn) deleteBtn.dataset.id = target.id || "";
-    if (refillBtn) refillBtn.dataset.id = target.id || "";
+    if (refillBtn) {
+      refillBtn.dataset.id = target.id || "";
+      refillBtn.disabled = !target.enabled;
+      refillBtn.setAttribute("aria-label", `为 ${target.name || "当前服务器"} 补号`);
+    }
     
     els.targets.appendChild(node);
   }
@@ -485,7 +489,7 @@ async function deleteTarget(targetId) {
 }
 
 async function refillTarget(targetId) {
-  if (window.accountPoolUI) await window.accountPoolUI.openDispatch(targetId);
+  if (window.accountPoolUI) await window.accountPoolUI.openRefill(targetId);
 }
 
 function handleTargetAction(event) {

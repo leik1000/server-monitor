@@ -2,3 +2,6 @@
 /.env
 /config/targets.json
 /config/sessions.sqlite3*
+/config/account_pool.sqlite3*
+/config/cookies.json
+__pycache__/

@@ -91,6 +91,49 @@
       </div>
     </section>
 
+    <section class="card pool-card" id="accountPoolCard">
+      <div class="section-head">
+        <div><h2>中央账号池</h2><p>上传账号 JSON，按服务器分配；确认入库后自动移出号池。</p></div>
+        <button id="openDispatchBtn" type="button">分配到服务器</button>
+      </div>
+      <div id="cookiePoolSummary" class="pool-stats" aria-live="polite">正在读取库存...</div>
+      <details class="pool-upload">
+        <summary>批量上传账号 / 粘贴导入</summary>
+        <p class="pool-help">支持 available_account 目录中的账号 JSON、JSON 数组和每行一个 Cookie。选择文件夹可一次导入全部账号，自动分批上传并去重。</p>
+        <div class="pool-upload-actions">
+          <label class="pool-file-label">选择账号文件<input id="accountFiles" type="file" accept=".json,.txt" multiple /></label>
+          <label class="pool-file-label">选择账号文件夹<input id="accountFolder" type="file" webkitdirectory multiple /></label>
+        </div>
+        <label for="cookieImportText" class="pool-help">或粘贴账号内容</label>
+        <textarea id="cookieImportText" rows="4" placeholder="粘贴完整账号 JSON、{items: [...]} 或每行一个 Cookie"></textarea>
+        <button id="importCookiesBtn" type="button">导入到号池</button>
+      </details>
+      <p id="cookieFormMessage" class="form-message" role="status"></p>
+      <details id="uploadErrorDetails" hidden><summary>查看上传错误</summary><pre id="uploadErrors"></pre></details>
+      <details id="poolJobsPanel" open>
+        <summary>导入任务 <span id="dispatchConcurrency"></span></summary>
+        <div id="importJobs" class="pool-jobs">暂无任务</div>
+      </details>
+    </section>
+
+    <dialog id="dispatchDialog" class="pool-dialog">
+      <form id="dispatchForm">
+        <div class="section-head"><div><h2>分配到服务器</h2><p id="dispatchAvailable"></p></div><button id="closeDispatchBtn" type="button" class="secondary">关闭</button></div>
+        <p class="pool-help">填写数量即选择该服务器。不同服务器并行执行，每台服务器自动分批；关闭页面不影响任务。</p>
+        <div id="dispatchTargets" class="dispatch-targets"></div>
+        <label class="dispatch-batch">每批账号数 <input id="dispatchBatchSize" type="number" min="1" max="100" value="50" required /></label>
+        <p id="dispatchTotal" class="pool-help"></p>
+        <p id="dispatchMessage" class="form-message" role="status"></p>
+        <button id="submitDispatchBtn" type="submit">开始导入</button>
+      </form>
+    </dialog>
+    <dialog id="jobDetailDialog" class="pool-dialog">
+      <div class="section-head"><h2>任务账号明细</h2><button id="closeJobDetailBtn" type="button" class="secondary">关闭</button></div>
+      <p class="pool-help">失败和待确认账号优先显示，每页 100 条。待确认账号始终绑定原服务器。</p>
+      <div id="jobDetailItems"></div>
+      <div class="pool-upload-actions"><button id="jobPrevBtn" type="button" class="secondary">上一页</button><button id="jobNextBtn" type="button" class="secondary">下一页</button></div>
+    </dialog>
+
     <!-- 配置管理器（可折叠） -->
     <section class="card manager-card collapsed" id="managerCard">
       <div class="section-head">
@@ -337,5 +380,6 @@
   </template>
 
   <script src="/static/app.js"></script>
+  <script src="/static/account-pool.js"></script>
 </body>
 </html>

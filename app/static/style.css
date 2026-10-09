@@ -1,3 +1,35 @@
+.pool-card { padding: 1.5rem; margin-bottom: 1.5rem; }
+.pool-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.pool-stat { padding: 1rem; background: var(--input-bg); border: 1px solid var(--border); border-radius: .7rem; }
+.pool-stat span, .pool-stat strong { display: block; }
+.pool-stat span { color: var(--text-muted); font-size: .8rem; }
+.pool-stat strong { font-size: 1.65rem; margin-top: .25rem; }
+.pool-available strong { color: var(--ok); }
+.pool-help { color: var(--text-muted); font-size: .8rem; margin: .7rem 0; }
+.pool-card summary { cursor: pointer; padding: .7rem 0; }
+.pool-card textarea { width: 100%; margin: .5rem 0; }
+.pool-upload-actions, .pool-job-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: .7rem 0; }
+.pool-file-label { padding: .75rem; border: 1px dashed var(--border-focus); border-radius: .7rem; max-width: 100%; }
+.pool-file-label input { display: block; margin-top: .5rem; max-width: 100%; }
+.pool-jobs { max-height: 500px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .8rem; }
+.pool-job { background: var(--input-bg); border: 1px solid var(--border); border-radius: .7rem; padding: 1rem; font-size: .8rem; }
+.pool-job-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
+.pool-job-heading span { color: var(--info); }
+.pool-job progress { width: 100%; height: 6px; margin: .5rem 0; accent-color: var(--ok); }
+.pool-dialog { margin: auto; width: min(720px, 94vw); max-height: 88vh; overflow: auto; padding: 1.5rem; background: #111827; color: var(--text); border: 1px solid var(--border-focus); border-radius: 1rem; }
+.pool-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+.dispatch-target { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
+.dispatch-target span { min-width: 0; overflow-wrap: anywhere; }
+.dispatch-target small { display: block; color: var(--text-muted); }
+.dispatch-target input, .dispatch-batch input { width: 110px; flex-shrink: 0; }
+.dispatch-targets { max-height: 40vh; overflow: auto; }
+.dispatch-batch { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; }
+.pool-detail-item { border-bottom: 1px solid var(--border); padding: .75rem 0; overflow-wrap: anywhere; }
+.pool-detail-item span { display: block; color: var(--text-muted); font-size: .8rem; }
+.pool-detail-item p { color: var(--warn); font-size: .8rem; }
+#uploadErrors { white-space: pre-wrap; max-height: 250px; overflow: auto; font-size: .8rem; color: var(--warn); }
+@media (max-width: 600px) { .pool-card { padding: 1rem; } .pool-card .section-head { flex-wrap: wrap; gap: 1rem; } .pool-jobs { grid-template-columns: 1fr; } }
+
 :root {
   color-scheme: dark;
   --bg: #080b11;

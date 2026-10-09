@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from app.account_pool import AccountPool, parse_document
+from app.account_dispatch import Dispatcher
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("MONITOR_TARGETS_FILE", BASE_DIR / "config" / "targets.json"))
@@ -189,10 +191,10 @@ class TargetClient:
 
     async def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         await self.ensure_login()
-        response = await self.client.post(path, json=payload)
+        response = await self.client.post(path, json=payload, timeout=60)
         if response.status_code == 401:
             await self.login()
-            response = await self.client.post(path, json=payload)
+            response = await self.client.post(path, json=payload, timeout=60)
         if response.status_code < 200 or response.status_code >= 300:
             detail = response.text[:300]
             raise RuntimeError(f"POST {path} failed: HTTP {response.status_code} {detail}")
@@ -460,103 +462,9 @@ def save_targets(targets: list[Target]) -> None:
     temp_path.replace(CONFIG_PATH)
 
 
-def cookie_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, dict):
-        if isinstance(value.get("cookie"), (str, dict, list)):
-            return cookie_text(value["cookie"])
-        if isinstance(value.get("cookies"), list):
-            return cookie_text(value["cookies"])
-        usage = value.get("_usage")
-        if isinstance(usage, dict) and usage.get("cookie_header"):
-            return str(usage["cookie_header"]).strip()
-        pairs = [f"{key}={val}" for key, val in value.items() if key and val is not None]
-        return "; ".join(pairs)
-    if isinstance(value, list):
-        pairs = []
-        for item in value:
-            if isinstance(item, dict) and item.get("name") is not None and item.get("value") is not None:
-                pairs.append(f"{item['name']}={item['value']}")
-            elif isinstance(item, str) and item.strip():
-                pairs.append(item.strip())
-        return "; ".join(pairs)
-    return str(value or "").strip()
-
-
-class CookiePool:
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-
-    def _load(self) -> list[dict[str, Any]]:
-        if not COOKIE_POOL_PATH.exists():
-            return []
-        try:
-            raw = json.loads(COOKIE_POOL_PATH.read_text(encoding="utf-8"))
-            return raw.get("cookies", []) if isinstance(raw, dict) else raw
-        except (OSError, json.JSONDecodeError):
-            return []
-
-    def _save(self, items: list[dict[str, Any]]) -> None:
-        COOKIE_POOL_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = COOKIE_POOL_PATH.with_name(f"{COOKIE_POOL_PATH.name}.tmp")
-        temp_path.write_text(json.dumps({"cookies": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        temp_path.replace(COOKIE_POOL_PATH)
-
-    async def import_items(self, items: list[Any]) -> dict[str, Any]:
-        async with self._lock:
-            rows = self._load()
-            known = {str(row.get("hash") or "") for row in rows}
-            imported, duplicates, invalid = [], 0, 0
-            for index, item in enumerate(items, start=1):
-                value = cookie_text(item.get("cookie") if isinstance(item, dict) else item)
-                if not value:
-                    invalid += 1
-                    continue
-                digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-                if digest in known:
-                    duplicates += 1
-                    continue
-                name = str(item.get("name") or f"cookie-{len(rows) + 1}").strip() if isinstance(item, dict) else f"cookie-{len(rows) + 1}"
-                row = {"id": uuid.uuid4().hex[:12], "name": name, "cookie": value, "hash": digest, "status": "available", "target_id": "", "imported_at": int(time.time()), "last_error": ""}
-                rows.append(row)
-                known.add(digest)
-                imported.append({"id": row["id"], "name": name, "hash": digest[:12]})
-            self._save(rows)
-            return {"status": "ok", "imported_count": len(imported), "duplicate_count": duplicates, "invalid_count": invalid, "available_count": sum(row.get("status") == "available" for row in rows), "items": imported}
-
-    async def reserve(self, target_id: str, count: int) -> list[dict[str, Any]]:
-        async with self._lock:
-            rows = self._load()
-            selected = [row for row in rows if row.get("status") == "available"][:max(0, count)]
-            ids = {row.get("id") for row in selected}
-            for row in rows:
-                if row.get("id") in ids:
-                    row.update({"status": "assigning", "target_id": target_id})
-            self._save(rows)
-            return [dict(row) for row in selected]
-
-    async def finish(self, rows: list[dict[str, Any]], result: dict[str, Any]) -> None:
-        async with self._lock:
-            current = self._load()
-            failed_indexes = {int(item.get("index")) for item in result.get("failed", []) if isinstance(item, dict) and str(item.get("index", "")).isdigit()}
-            for index, original in enumerate(rows):
-                for row in current:
-                    if row.get("id") != original.get("id"):
-                        continue
-                    if index in failed_indexes:
-                        row.update({"status": "import_failed", "last_error": "目标服务器导入失败"})
-                    else:
-                        row.update({"status": "assigned", "last_error": ""})
-            self._save(current)
-
-    async def summary(self) -> dict[str, Any]:
-        async with self._lock:
-            rows = self._load()
-            return {"total": len(rows), "available": sum(row.get("status") == "available" for row in rows), "assigned": sum(row.get("status") == "assigned" for row in rows), "assigning": sum(row.get("status") == "assigning" for row in rows), "failed": sum(row.get("status") == "import_failed" for row in rows)}
-
-
-cookie_pool = CookiePool()
+cookie_pool = AccountPool(Path(os.getenv("MONITOR_ACCOUNT_POOL_DB", BASE_DIR / "config" / "account_pool.sqlite3")))
+dispatcher = Dispatcher(cookie_pool, load_targets, TargetClient,
+                        int(os.getenv("MONITOR_IMPORT_PARALLELISM", "3")))
 
 
 class MonitorState:
@@ -651,8 +559,16 @@ class MonitorState:
             client = self.clients.get(target_id)
             if client is None:
                 raise ValueError("target client not found")
-            token_payload = await client.get_json("/api/v1/tokens?page=1&page_size=1")
-            active = normalize_token_summary(token_payload)["active"]
+            if not target.enabled:
+                raise ValueError("目标服务器已停用")
+            if await asyncio.to_thread(cookie_pool.has_open_job, target_id):
+                return {"status": "running", "message": "该服务器已有导入任务，请查看中央号池任务记录"}
+            profile_payload, token_payload = await asyncio.gather(
+                client.get_json("/api/v1/refresh-profiles"),
+                client.get_json("/api/v1/tokens?page=1&page_size=1"),
+            )
+            pool_summary = profile_payload.get("pool_summary") or {}
+            active = normalize_token_summary(token_payload)["active"] + int(pool_summary.get("pending") or 0)
             if count is None:
                 if target.refill_mode == "count":
                     count = target.refill_count
@@ -660,13 +576,9 @@ class MonitorState:
                     return {"status": "skipped", "active": active, "message": "当前账号数高于补号阈值"}
                 else:
                     count = max(0, target.refill_target - active)
-            count = min(max(0, int(count)), target.refill_batch_size)
-            reserved = await cookie_pool.reserve(target_id, count)
-            if not reserved:
-                return {"status": "empty", "active": active, "message": "中央 Cookie 池没有可用 Cookie"}
-            result = await client.post_json("/api/v1/refresh-profiles/import-cookie-batch", {"items": [{"cookie": row["cookie"], "name": row.get("name")} for row in reserved]})
-            await cookie_pool.finish(reserved, result)
-            return {"status": result.get("status", "ok"), "active_before": active, "requested_count": count, "pool_result": result}
+            if not count or count <= 0:
+                return {"status": "skipped", "message": "现有账号（含待激活）已满足目标"}
+            return await asyncio.to_thread(cookie_pool.create_jobs, [(target, int(count))], target.refill_batch_size, "auto")
         finally:
             self._last_refill_at[target_id] = time.time()
             self._refill_locks.discard(target_id)
@@ -680,7 +592,14 @@ class MonitorState:
                 should_run = target.refill_mode == "count" or (target.refill_target > active and (not target.refill_threshold or active <= target.refill_threshold))
                 recent = time.time() - self._last_refill_at.get(target.id, 0)
                 if should_run and recent >= REFILL_INTERVAL_SECONDS and target.id not in self._refill_locks:
-                    asyncio.create_task(self.refill(target.id))
+                    asyncio.create_task(self.safe_auto_refill(target.id))
+
+    async def safe_auto_refill(self, target_id):
+        try:
+            await self.refill(target_id)
+        except Exception:
+            # Next scheduled cycle retries; no unhandled task/credential-bearing errors.
+            pass
 
 
 def build_summary(targets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -709,11 +628,14 @@ templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
 @app.on_event("startup")
 async def startup() -> None:
+    await asyncio.to_thread(cookie_pool.initialize, COOKIE_POOL_PATH)
+    await dispatcher.start()
     await monitor_state.start()
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    await dispatcher.stop()
     await monitor_state.stop()
 
 
@@ -808,6 +730,8 @@ async def update_monitor_target(target_id: str, request: Request) -> dict[str, A
                 updated = target_from_payload(
                     payload, target_id=target.id, existing=target
                 )
+                if updated.base_url.rstrip("/") != target.base_url.rstrip("/") and await asyncio.to_thread(cookie_pool.has_open_job, target.id):
+                    raise ValueError("该服务器存在未完成的导入任务，不能修改地址；请先完成或处理任务")
                 targets[index] = updated
                 save_targets(targets)
                 await monitor_state.refresh()
@@ -819,6 +743,8 @@ async def update_monitor_target(target_id: str, request: Request) -> dict[str, A
 
 @app.delete("/api/targets/{target_id}", dependencies=[Depends(verify_api_auth)])
 async def delete_monitor_target(target_id: str) -> dict[str, Any]:
+    if await asyncio.to_thread(cookie_pool.has_open_job, target_id):
+        raise HTTPException(status_code=409, detail="该服务器存在未完成的导入任务，请先处理后再删除")
     targets = load_targets()
     next_targets = [target for target in targets if target.id != target_id]
     if len(next_targets) == len(targets):
@@ -838,16 +764,101 @@ async def refresh() -> dict[str, Any]:
 
 @app.get("/api/cookies", dependencies=[Depends(verify_api_auth)])
 async def cookie_pool_summary() -> dict[str, Any]:
-    return await cookie_pool.summary()
+    return await asyncio.to_thread(cookie_pool.summary)
 
 
 @app.post("/api/cookies/import", dependencies=[Depends(verify_api_auth)])
 async def import_cookies(request: Request) -> dict[str, Any]:
-    payload = await request.json()
-    items = payload.get("items") if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        raise HTTPException(status_code=400, detail="items must be a list")
-    return await cookie_pool.import_items(items)
+    try:
+        payload = await limited_json(request)
+        if isinstance(payload, dict) and "documents" in payload:
+            documents = payload["documents"]
+            if not isinstance(documents, list) or len(documents) > 100:
+                raise ValueError("每批最多上传 100 个文件")
+            results = {"imported_count": 0, "duplicate_count": 0, "invalid_count": 0, "errors": []}
+            for document in documents:
+                if not isinstance(document, dict) or not isinstance(document.get("text"), str):
+                    raise ValueError("文件内容格式不正确")
+                source = str(document.get("name") or "粘贴内容")[:200]
+                try:
+                    items = await asyncio.to_thread(parse_document, document["text"])
+                    if len(items) > 10000:
+                        raise ValueError("单文件最多 10000 个账号，请拆分文件")
+                    result = await asyncio.to_thread(cookie_pool.import_items, items)
+                except ValueError as exc:
+                    result = {"imported_count": 0, "duplicate_count": 0, "invalid_count": 1,
+                              "errors": [{"index": 0, "error": str(exc)}]}
+                for key in ("imported_count", "duplicate_count", "invalid_count"):
+                    results[key] += result[key]
+                results["errors"].extend(dict(e, source=source) for e in result["errors"])
+            results["errors"] = results["errors"][:100]
+            return results
+        items = payload.get("items") if isinstance(payload, dict) and "items" in payload else payload
+        items = items if isinstance(items, list) else [items]
+        if len(items) > 10000:
+            raise ValueError("单次最多 10000 个账号")
+        return await asyncio.to_thread(cookie_pool.import_items, items)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def limited_json(request: Request):
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 16 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="单批上传不能超过 16MB，请分批上传")
+        chunks.append(chunk)
+    try:
+        return json.loads(b"".join(chunks))
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("请求 JSON 格式错误") from None
+
+
+@app.get("/api/import-jobs", dependencies=[Depends(verify_api_auth)])
+async def import_jobs():
+    return {"jobs": await asyncio.to_thread(cookie_pool.list_jobs), "parallelism": dispatcher.parallelism}
+
+
+@app.post("/api/import-jobs", dependencies=[Depends(verify_api_auth)], status_code=202)
+async def create_import_jobs(request: Request):
+    try:
+        payload = await limited_json(request)
+        if not isinstance(payload, dict) or not isinstance(payload.get("allocations"), list):
+            raise ValueError("请选择服务器和导入数量")
+        targets = {t.id: t for t in load_targets()}
+        allocations = []
+        for item in payload["allocations"]:
+            if not isinstance(item, dict):
+                raise ValueError("分配参数无效")
+            target = targets.get(str(item.get("target_id") or ""))
+            count = item.get("count")
+            if not target or not target.enabled or type(count) is not int:
+                raise ValueError("目标服务器不存在、已停用或数量不是整数")
+            allocations.append((target, count))
+        batch_size = payload.get("batch_size", 50)
+        if type(batch_size) is not int:
+            raise ValueError("批大小必须为整数")
+        return await asyncio.to_thread(cookie_pool.create_jobs, allocations, batch_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/import-jobs/{job_id}", dependencies=[Depends(verify_api_auth)])
+async def import_job_detail(job_id: str, offset: int = 0):
+    try:
+        return {"items": await asyncio.to_thread(cookie_pool.details, job_id, max(0, offset))}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/import-jobs/{job_id}/{action}", dependencies=[Depends(verify_api_auth)])
+async def import_job_action(job_id: str, action: str):
+    try:
+        await asyncio.to_thread(cookie_pool.action, job_id, action)
+        return {"status": "ok"}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/targets/{target_id}/refill", dependencies=[Depends(verify_api_auth)])

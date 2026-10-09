@@ -485,18 +485,7 @@ async function deleteTarget(targetId) {
 }
 
 async function refillTarget(targetId) {
-  try {
-    const res = await fetch(`/api/targets/${encodeURIComponent(targetId)}/refill`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    const result = data.pool_result || {};
-    alert(data.message || `补号完成：成功 ${result.imported_count || 0} 个，失败 ${result.failed_count || 0} 个`);
-    await loadStatus(true);
-  } catch (err) {
-    alert(`补号失败：${err.message || err}`);
-  }
+  if (window.accountPoolUI) await window.accountPoolUI.openDispatch(targetId);
 }
 
 function handleTargetAction(event) {
@@ -540,38 +529,11 @@ async function loadStatus(force = false) {
 }
 
 async function loadCookiePool() {
-  try {
-    const res = await fetch("/api/cookies");
-    const data = await res.json();
-    els.cookiePoolSummary.textContent = `总数 ${data.total || 0} · 可用 ${data.available || 0} · 已分配 ${data.assigned || 0} · 失败 ${data.failed || 0}`;
-  } catch (err) {
-    els.cookiePoolSummary.textContent = `读取失败：${err.message || err}`;
-  }
+  if (window.accountPoolUI) await window.accountPoolUI.refresh();
 }
 
 async function importCookies() {
-  const text = els.cookieImportText.value.trim();
-  if (!text) return;
-  let items;
-  try {
-    const parsed = JSON.parse(text);
-    items = Array.isArray(parsed) ? parsed : [parsed];
-  } catch (_) {
-    items = text.split(/\r?\n/).filter(Boolean).map((cookie) => ({ cookie }));
-  }
-  els.importCookiesBtn.disabled = true;
-  try {
-    const res = await fetch("/api/cookies/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    els.cookieFormMessage.textContent = `导入 ${data.imported_count} 个，重复 ${data.duplicate_count} 个，无效 ${data.invalid_count} 个`;
-    els.cookieImportText.value = "";
-    await loadCookiePool();
-  } catch (err) {
-    els.cookieFormMessage.textContent = `导入失败：${err.message || err}`;
-  } finally {
-    els.importCookiesBtn.disabled = false;
-  }
+  if (window.accountPoolUI) await window.accountPoolUI.importText();
 }
 
 // Collapsible Form Bindings

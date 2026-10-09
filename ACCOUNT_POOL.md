@@ -6,6 +6,8 @@
 2. 再更新 `server-monitor`，安装 `requirements.txt` 中的依赖并重启。使用 Docker Compose 时，在各项目目录执行 `docker compose up -d --build`。
 3. 刷新监控页面，出现独立的「中央账号池」区域。
 
+首页与登录页的 JS/CSS 地址由文件内容的 SHA-256 自动生成 `?v=...` 版本号。资源内容变化后地址自动变化，内容未变时保持原版本；HTML 设置 `Cache-Control: no-cache`，浏览器重新验证页面以获取最新资源地址，无需手工维护版本号。
+
 Luma 端相关修改：
 
 - `api/routes/account_dispatch.py`：能力检查、批量分配、回执查询。

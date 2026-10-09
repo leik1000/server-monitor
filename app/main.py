@@ -628,6 +628,20 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="s
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
 
+def static_asset_url(filename: str) -> str:
+    # Hash the contents rather than timestamps so every deployment is automatic,
+    # and unchanged assets keep their existing browser cache across restarts.
+    static_dir = (BASE_DIR / "app" / "static").resolve()
+    asset_path = (static_dir / filename).resolve()
+    if not asset_path.is_relative_to(static_dir):
+        raise ValueError("Invalid static asset path")
+    version = hashlib.sha256(asset_path.read_bytes()).hexdigest()[:16]
+    return f"/static/{filename}?v={version}"
+
+
+templates.env.globals["static_asset_url"] = static_asset_url
+
+
 @app.on_event("startup")
 async def startup() -> None:
     await asyncio.to_thread(cookie_pool.initialize, COOKIE_POOL_PATH)
@@ -645,14 +659,18 @@ async def shutdown() -> None:
 async def index(request: Request) -> Response:
     if not is_authenticated(request):
         return RedirectResponse(url="/login", status_code=307)
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html", {"request": request}, headers={"Cache-Control": "no-cache"}
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request) -> Response:
     if is_authenticated(request):
         return RedirectResponse(url="/", status_code=307)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(
+        "login.html", {"request": request, "error": None}, headers={"Cache-Control": "no-cache"}
+    )
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -674,7 +692,8 @@ async def login_post(
         return response
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "error": "用户名或密码不正确"}
+        {"request": request, "error": "用户名或密码不正确"},
+        headers={"Cache-Control": "no-cache"},
     )
 
 

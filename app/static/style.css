@@ -877,14 +877,6 @@ tr:last-child td {
   display: none;
 }
 
-.target-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  border-top: 1px solid var(--border);
-  padding-top: 0.85rem;
-}
-
 .empty {
   color: var(--text-muted);
   padding: 3rem 1.5rem;

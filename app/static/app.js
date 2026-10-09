@@ -250,12 +250,8 @@ function renderTargets(targets = []) {
     
     renderTimeline(card.querySelector(".timeline"), stats.recent_completed_timeline || [], target);
     
-    // 编辑和删除按钮的 ID 绑定
-    const editBtn = card.querySelector(".btn-edit");
-    const deleteBtn = card.querySelector(".btn-delete");
+    // 补号按钮的服务器 ID 绑定
     const refillBtn = card.querySelector(".btn-refill");
-    if (editBtn) editBtn.dataset.id = target.id || "";
-    if (deleteBtn) deleteBtn.dataset.id = target.id || "";
     if (refillBtn) {
       refillBtn.dataset.id = target.id || "";
       refillBtn.disabled = !target.enabled;

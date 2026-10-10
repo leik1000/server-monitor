@@ -138,7 +138,7 @@ class AccountPool:
                     state TEXT NOT NULL DEFAULT 'available', created_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS accounts_state ON accounts(state,created_at);
                 CREATE TABLE IF NOT EXISTS delivered (
-                    fingerprint TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL,
+                    fingerprint TEXT NOT NULL, identity TEXT NOT NULL,
                     target_id TEXT NOT NULL, profile_id TEXT NOT NULL, created_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS delivered_created_at ON delivered(created_at);
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -156,15 +156,25 @@ class AccountPool:
                     profile_id TEXT NOT NULL DEFAULT '', already_exists INTEGER NOT NULL DEFAULT 0);
                 CREATE INDEX IF NOT EXISTS items_job_state ON job_items(job_id,state);
             """)
+        # Delivery history records events, not inventory identities. Upgrade older
+        # databases atomically so re-imported accounts can be delivered again.
+        with self.db() as conn:
+            if any(row["pk"] for row in conn.execute("PRAGMA table_info(delivered)")):
+                conn.execute("""CREATE TABLE delivered_events (
+                    fingerprint TEXT NOT NULL, identity TEXT NOT NULL,
+                    target_id TEXT NOT NULL, profile_id TEXT NOT NULL, created_at REAL NOT NULL)""")
+                conn.execute("INSERT INTO delivered_events SELECT * FROM delivered")
+                conn.execute("DROP TABLE delivered")
+                conn.execute("ALTER TABLE delivered_events RENAME TO delivered")
+                conn.execute("CREATE INDEX delivered_created_at ON delivered(created_at)")
         if legacy_path and Path(legacy_path).exists():
             self.migrate(Path(legacy_path))
 
     @staticmethod
     def _insert(conn, account, state="available"):
-        for table in ("accounts", "delivered"):
-            if conn.execute(f"SELECT 1 FROM {table} WHERE fingerprint=? OR identity=?",
-                            (account["fingerprint"], account["identity"])).fetchone():
-                return False
+        if conn.execute("SELECT 1 FROM accounts WHERE fingerprint=? OR identity=?",
+                        (account["fingerprint"], account["identity"])).fetchone():
+            return False
         conn.execute("INSERT INTO accounts VALUES (?,?,?,?,?,?,?)",
                      (uuid.uuid4().hex, account["fingerprint"], account["identity"],
                       account["name"], account["cookie"], state, time.time()))
@@ -201,15 +211,14 @@ class AccountPool:
                     "invalid_count": invalid, "errors": errors}
         now = time.time()
         rows = [(uuid.uuid4().hex, a["fingerprint"], a["identity"], a["name"], a["cookie"],
-                 now, a["fingerprint"], a["identity"]) for a in accounts]
+                 now) for a in accounts]
         # SQLite has one writer. One executemany/commit avoids per-file fsync and
         # lock contention, while unique indexes handle in-batch/concurrent duplicates.
         with self.db() as conn:
             before = conn.total_changes
             conn.executemany("""INSERT INTO accounts
                 (id,fingerprint,identity,name,cookie,state,created_at)
-                SELECT ?,?,?,?,?,'available',?
-                WHERE NOT EXISTS (SELECT 1 FROM delivered WHERE fingerprint=? OR identity=?)
+                VALUES (?,?,?,?,?,'available',?)
                 ON CONFLICT DO NOTHING""", rows)
             added = conn.total_changes - before
         return {"imported_count": added, "duplicate_count": len(accounts) - added,

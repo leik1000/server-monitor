@@ -101,7 +101,54 @@ class PoolTests(PoolFixture):
         self.assertEqual((summary["total"], summary["assigned"], summary["failed"], summary["unknown"]), (2, 2, 1, 1))
         with self.pool.db() as conn:
             self.assertIsNone(conn.execute("SELECT cookie FROM accounts WHERE id=?", (first["account_id"],)).fetchone())
-        self.assertEqual(self.seed(4)["duplicate_count"], 4)
+        result = self.seed(4)
+        self.assertEqual((result["imported_count"], result["duplicate_count"]), (2, 2))
+
+    def test_delivered_accounts_can_be_reimported_and_delivered_again(self):
+        variants = [
+            {"email": "a@example.test", "cookie": "a=1; b=2"},
+            {"email": "a@example.test", "cookie": "a=1; b=2"},
+            {"email": "A@example.test", "cookie": "a=changed"},
+            {"email": "other@example.test", "cookie": "b=2; a=1"},
+        ]
+        keys = []
+        for index, account in enumerate(variants):
+            result = self.pool.import_items([account, account])
+            self.assertEqual((result["imported_count"], result["duplicate_count"]), (1, 1))
+            self.pool.create_jobs([(target(str(index)), 1)])
+            self.assertEqual(self.pool.import_items([account])["duplicate_count"], 1)
+            job = self.pool.claim()
+            keys.append(job["items"][0]["id"])
+            receipt = [{"import_key": keys[-1], "persisted": True, "profile_id": f"p{index}"}]
+            self.pool.finish(job, receipt)
+            self.pool.finish(job, receipt)  # A repeated callback must not add history.
+            self.assertEqual(self.pool.summary()["total"], 0)
+            self.assertEqual(self.pool.list_jobs()[0]["status"], "completed")
+        self.assertEqual(len(set(keys)), len(variants))
+        with self.pool.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delivered").fetchone()[0], len(variants))
+
+    def test_old_delivery_history_migration_preserves_records(self):
+        account = normalize_account({"email": "user0@example.test", "cookie": "session=0"})
+        old_record = (account["fingerprint"], account["identity"], "old-server", "old-profile", 123.0)
+        with self.pool.db() as conn:
+            conn.execute("DROP TABLE delivered")
+            conn.execute("""CREATE TABLE delivered (
+                fingerprint TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL,
+                target_id TEXT NOT NULL, profile_id TEXT NOT NULL, created_at REAL NOT NULL)""")
+            conn.execute("CREATE INDEX delivered_created_at ON delivered(created_at)")
+            conn.execute("INSERT INTO delivered VALUES (?,?,?,?,?)", old_record)
+        self.pool.initialize()
+        self.pool.initialize()
+        self.assertEqual(self.seed(1)["imported_count"], 1)
+        self.pool.create_jobs([(target(), 1)])
+        job = self.pool.claim()
+        self.pool.finish(job, [{"import_key": job["items"][0]["id"], "persisted": True, "profile_id": "new-profile"}])
+        with self.pool.db() as conn:
+            rows = conn.execute("SELECT * FROM delivered ORDER BY created_at").fetchall()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(tuple(rows[0]), old_record)
+            self.assertIn("delivered_created_at", [r["name"] for r in conn.execute("PRAGMA index_list(delivered)")])
 
     def test_parallelism_and_server_serialization(self):
         self.seed(4)
